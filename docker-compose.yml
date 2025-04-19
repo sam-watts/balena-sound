@@ -27,6 +27,8 @@ services:
   multiroom-server:
     build: ./core/multiroom/server
     restart: on-failure
+    labels:
+      io.balena.features.dbus: 1
     ports:
       - 1704:1704
       - 1705:1705
