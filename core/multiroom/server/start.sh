@@ -29,6 +29,8 @@ fi
 # Start snapserver
 if [[ "$MODE" == "MULTI_ROOM" ]]; then
   echo "Starting multi-room server..."
+  mkdir -p /var/run/dbus
+  ln -sf /host/run/dbus/system_bus_socket /var/run/dbus/system_bus_socket
   /usr/bin/snapserver
 else
   echo "Multi-room server disabled. Exiting..."

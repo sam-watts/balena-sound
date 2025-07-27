@@ -96,3 +96,5 @@ if [[ -n "$SOUND_ENABLE_SOUNDCARD_INPUT" ]]; then
 fi
 
 exec pulseaudio
+
+pactl load-module module-loopback latency_msec=50 source=balena-sound.output.monitor sink=alsa_output.platform-fe00b840.mailbox.stereo-fallback
