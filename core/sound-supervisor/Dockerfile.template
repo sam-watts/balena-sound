@@ -4,21 +4,26 @@ WORKDIR /usr/src
 COPY core/sound-supervisor/package*.json ./
 RUN npm install
 
+RUN apt update && apt install -y cmake device-tree-compiler libfdt-dev wget unzip
+
+RUN apt-get update && apt-get install -y build-essential
+
+RUN wget https://github.com/raspberrypi/utils/archive/refs/heads/master.zip && \
+    unzip master.zip && \
+    cd utils-master/pinctrl && \
+    cmake . && \
+    make && \
+    make install && \
+    cd .. && cd ..
+    
 #dev-cmd-live=npm run livepush
 
 COPY core/sound-supervisor/src ./src
 COPY core/sound-supervisor/tsconfig.json .
 RUN npm run build
-COPY VERSION .
-
-FROM balenalib/%%BALENA_ARCH%%-alpine-node:14
-
-WORKDIR /usr/src
 
 COPY core/sound-supervisor/package*.json ./
-COPY --from=build /usr/src/build ./build
 COPY VERSION .
 
 RUN npm install --production
-
 CMD [ "npm", "start" ]

@@ -4,6 +4,10 @@ function checkInt(s: string | undefined): number | undefined {
   return s ? parseInt(s) : undefined
 }
 
+function checkBool(s: string | undefined): boolean {
+  return s === '1' || s?.toLowerCase() === 'true'
+}
+
 let deviceType: string = process.env.BALENA_DEVICE_TYPE ?? 'unknown'
 
 export function defaultMode(): SoundModes {
@@ -23,6 +27,14 @@ export const constants = {
     disallowUpdates: process.env.SOUND_MULTIROOM_DISALLOW_UPDATES ? true : false
   },
   volume: checkInt(process.env.SOUND_VOLUME) ?? 75,
-  inputSink: process.env.SOUND_INPUT_SINK ?? 'balena-sound.input'
+  inputSink: process.env.SOUND_INPUT_SINK ?? 'balena-sound.input',
+  audioToggle: {
+    enabled: checkBool(process.env.AUDIO_TOGGLE_ENABLED),
+    testMode: checkBool(process.env.AUDIO_TOGGLE_TEST_MODE),
+    buttonPin: checkInt(process.env.AUDIO_TOGGLE_BUTTON_PIN) ?? 22,
+    ledPin: checkInt(process.env.AUDIO_TOGGLE_LED_PIN) ?? 17,
+    snapcastSinkId: checkInt(process.env.AUDIO_TOGGLE_SNAPCAST_SINK_ID) ?? 3,
+    localSinkId: checkInt(process.env.AUDIO_TOGGLE_LOCAL_SINK_ID) ?? 0,
+  }
 }
 
