@@ -6,7 +6,7 @@ RUN npm install
 
 RUN apt update && apt install -y cmake device-tree-compiler libfdt-dev wget unzip
 
-RUN apt-get update && apt-get install -y build-essential
+RUN apt-get update && apt-get install -y build-essential cron
 
 RUN wget https://github.com/raspberrypi/utils/archive/refs/heads/master.zip && \
     unzip master.zip && \
@@ -24,6 +24,8 @@ RUN npm run build
 
 COPY core/sound-supervisor/package*.json ./
 COPY VERSION .
+
+RUN echo "0 20 * * * /sbin/shutdown -r now" | crontab
 
 RUN npm install --production
 CMD [ "npm", "start" ]
