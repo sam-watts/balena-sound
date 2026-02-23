@@ -8,6 +8,7 @@ import { constants } from './constants'
 import { restartDevice, rebootDevice, shutdownDevice } from './utils'
 import { getSdk, BalenaSDK } from 'balena-sdk'
 import * as fs from 'fs'
+import BluetoothPairingButtonController from './BluetoothPairingButtonController'
 
 const VERSION = fs.readFileSync('VERSION', 'utf-8')
 
@@ -15,7 +16,11 @@ export default class SoundAPI {
   private api: Application
   private sdk: BalenaSDK
 
-  constructor(public config: SoundConfig, public audioBlock: BalenaAudio) {
+  constructor(
+    public config: SoundConfig,
+    public audioBlock: BalenaAudio,
+    private pairingButtonController?: BluetoothPairingButtonController
+  ) {
     this.sdk = getSdk({ apiUrl: 'https://api.balena-cloud.com/' })
     this.sdk.auth.logout()
     this.sdk.auth.loginWithToken(process.env.BALENA_API_KEY!) // Asserted by io.balena.features.balena-api: '1'
@@ -53,6 +58,18 @@ export default class SoundAPI {
     this.api.get('/audio/volume', asyncHandler(async (_req, res) => res.json(await this.audioBlock.getVolume())))
     this.api.post('/audio/volume', asyncHandler(async (req, res) => res.json(await this.audioBlock.setVolume(req.body.volume))))
     this.api.get('/audio/sinks', asyncHandler(async (_req, res) => res.json(stringify(await this.audioBlock.getSinks()))))
+
+    // Bluetooth pairing (physical button, test-mode file, or API)
+    const pairingEnabled =
+      constants.bluetoothPairingButton.enabled ||
+      constants.bluetoothPairingButton.testMode ||
+      !!constants.bluetoothPairingButton.connectTo
+    if (pairingEnabled && this.pairingButtonController) {
+      this.api.post('/bluetooth/pairing', asyncHandler(async (_req, res) => {
+        await this.pairingButtonController!.connectToProjector()
+        res.json({ status: 'OK', message: 'Connected to projector' })
+      }))
+    }
 
     // Device management
     this.api.post('/device/restart', asyncHandler(async (_req, res) => res.json(await restartDevice())))

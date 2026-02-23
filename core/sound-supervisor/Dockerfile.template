@@ -6,7 +6,7 @@ RUN npm install
 
 RUN apt update && apt install -y cmake device-tree-compiler libfdt-dev wget unzip
 
-RUN apt-get update && apt-get install -y build-essential cron
+RUN apt-get update && apt-get install -y build-essential cron dbus bluez
 
 RUN wget https://github.com/raspberrypi/utils/archive/refs/heads/master.zip && \
     unzip master.zip && \

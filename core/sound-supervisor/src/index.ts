@@ -3,6 +3,7 @@ import BalenaAudio from 'balena-audio'
 import SoundAPI from './SoundAPI'
 import SoundConfig from './SoundConfig'
 import AudioModeController from './AudioModeController'
+import BluetoothPairingButtonController from './BluetoothPairingButtonController'
 import { constants } from './constants'
 import { getSdk } from 'balena-sdk'
 import { AudioOutputMode } from './types'
@@ -10,7 +11,8 @@ import { AudioOutputMode } from './types'
 // balenaSound core
 const config: SoundConfig = new SoundConfig()
 const audioBlock: BalenaAudio = new BalenaAudio(`tcp:${config.device.ip}:4317`)
-const soundAPI: SoundAPI = new SoundAPI(config, audioBlock)
+const pairingButtonController = new BluetoothPairingButtonController()
+const soundAPI: SoundAPI = new SoundAPI(config, audioBlock, pairingButtonController)
 config.bindAudioBlock(audioBlock)
 
 // AudioModeController will be initialized after audioBlock is ready
@@ -39,14 +41,31 @@ async function init() {
   // Initialize AudioModeController after audio block is ready
   audioModeController = new AudioModeController(audioBlock)
 
+  // Sync Bluetooth with initial mode (e.g. after restart we might already be LOCAL)
+  if (audioModeController.getCurrentMode() === AudioOutputMode.LOCAL && constants.bluetoothPairingButton.connectTo) {
+    pairingButtonController.connectToProjector().catch((e) =>
+      console.error('[Bluetooth] Connect on startup (LOCAL) failed:', e)
+    )
+  }
+
   // Set up event handlers for AudioModeController
-  audioModeController.on('modeChanged', (mode: AudioOutputMode) => {
+  audioModeController.on('modeChanged', async (mode: AudioOutputMode) => {
     console.log(`Audio output mode changed to: ${mode}`)
 
     if (mode === AudioOutputMode.LOCAL) {
       console.log('Local mode active: Multiroom coordination disabled')
+      if (constants.bluetoothPairingButton.connectTo) {
+        pairingButtonController.connectToProjector().catch((e) =>
+          console.error('[Bluetooth] Connect on LOCAL switch failed:', e)
+        )
+      }
     } else {
       console.log('Multiroom mode active: Snapcast coordination enabled')
+      if (constants.bluetoothPairingButton.connectTo) {
+        pairingButtonController.disconnectFromProjector().catch((e) =>
+          console.error('[Bluetooth] Disconnect on MULTIROOM switch failed:', e)
+        )
+      }
       // If we're switching back to multiroom and we're the master, announce ourselves
       if (config.isMultiRoomMaster()) {
         fleetPublisher.publish('fleet-update', { type: 'master', master: config.multiroom.master })
@@ -127,17 +146,21 @@ fleetSubscriber.on('fleet-sync', (data: any) => {
 
 
 // Cleanup on exit
-process.on('SIGINT', () => {
+async function cleanup(): Promise<void> {
   console.log('Shutting down...')
-  audioModeController.cleanup()
+  if (audioModeController) await audioModeController.cleanup()
+  if (
+    constants.bluetoothPairingButton.enabled ||
+    constants.bluetoothPairingButton.testMode ||
+    constants.bluetoothPairingButton.connectTo
+  ) {
+    await pairingButtonController.cleanup()
+  }
   process.exit(0)
-})
+}
 
-process.on('SIGTERM', () => {
-  console.log('Shutting down...')
-  audioModeController.cleanup()
-  process.exit(0)
-})
+process.on('SIGINT', () => cleanup())
+process.on('SIGTERM', () => cleanup())
 
 async function timeout(delay: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, delay))
