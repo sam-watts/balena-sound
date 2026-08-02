@@ -44,6 +44,11 @@ export const constants = {
     testMode: checkBool(process.env.AUDIO_TOGGLE_TEST_MODE),
     buttonPin: checkInt(process.env.AUDIO_TOGGLE_BUTTON_PIN) ?? 22,
     ledPin: checkInt(process.env.AUDIO_TOGGLE_LED_PIN) ?? 17,
+    // Start film mode by itself when the projector appears. Off unless asked for,
+    // because a projector that keeps Bluetooth alive in standby would otherwise
+    // hold the system in film mode and stop multiroom.
+    autoFilmMode: checkBool(process.env.AUDIO_TOGGLE_AUTO_FILM_MODE),
+    projectorPollInterval: (checkInt(process.env.AUDIO_TOGGLE_PROJECTOR_POLL) ?? 20) * 1000,
   },
   bluetoothPairingButton: {
     enabled: checkBool(process.env.BLUETOOTH_PAIRING_BUTTON_ENABLED),

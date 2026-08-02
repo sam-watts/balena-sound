@@ -206,6 +206,15 @@ class AudioModeController extends EventEmitter {
         await this.setMode(newMode)
     }
 
+    // Used by the projector watcher. Same path as the button, so the LED still
+    // pulses while switching and settles solid in film mode.
+    public async requestMode(mode: AudioOutputMode): Promise<void> {
+        if (mode === this.currentMode) {
+            return
+        }
+        await this.setMode(mode)
+    }
+
     public getCurrentMode(): AudioOutputMode {
         return this.currentMode
     }

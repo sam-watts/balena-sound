@@ -5,6 +5,7 @@ import SoundConfig from './SoundConfig'
 import AudioModeController from './AudioModeController'
 import BluetoothPairingButtonController from './BluetoothPairingButtonController'
 import MasterElection from './MasterElection'
+import ProjectorPresence from './ProjectorPresence'
 import { constants } from './constants'
 import { getSdk } from 'balena-sdk'
 import { startBalenaService, stopBalenaService } from './utils'
@@ -26,6 +27,12 @@ const election: MasterElection = new MasterElection({
   acceptCooldownMs: constants.multiroom.acceptCooldown,
   deferToPlayingMasterMs: constants.multiroom.deferToPlayingMaster
 })
+// Film mode auto-detect. `switchingAutomatically` distinguishes our own mode changes
+// from a button press, so a manual exit can suppress auto-entry while the projector
+// is still sitting there powered on.
+const projectorPresence: ProjectorPresence = new ProjectorPresence()
+let switchingAutomatically: boolean = false
+
 let hasLocalPlayback: boolean = false
 let wasPlaying: boolean = false
 let reconciling: boolean = false
@@ -76,6 +83,30 @@ function applyMultiRoomServices(running: boolean): void {
     apply('multiroom-server')
   }
   apply('multiroom-client')
+}
+
+async function pollProjector(): Promise<void> {
+  if (!constants.bluetoothPairingButton.connectTo || !constants.audioToggle.autoFilmMode) {
+    return
+  }
+
+  const reachable: boolean = await pairingButtonController.isProjectorReachable()
+  const action = projectorPresence.update({ reachable, isLocalMode: audioModeController.isLocalMode() })
+  if (action === 'none') {
+    return
+  }
+
+  const mode: AudioOutputMode = action === 'enter' ? AudioOutputMode.LOCAL : AudioOutputMode.MULTIROOM
+  console.log(`Projector ${reachable ? 'detected' : 'gone'}, switching to ${mode}`)
+
+  switchingAutomatically = true
+  try {
+    await audioModeController.requestMode(mode)
+  } catch (error) {
+    console.error('Projector auto-switch failed:', error)
+  } finally {
+    switchingAutomatically = false
+  }
 }
 
 // Decide whether this device should be the multi-room master.
@@ -181,6 +212,10 @@ async function init() {
   audioModeController.on('modeChanged', async (mode: AudioOutputMode) => {
     console.log(`Audio output mode changed to: ${mode}`)
 
+    if (!switchingAutomatically) {
+      projectorPresence.noteManualToggle(mode === AudioOutputMode.LOCAL)
+    }
+
     if (mode === AudioOutputMode.LOCAL) {
       console.log('Local mode active: stopping multiroom so films get the shortest path')
       applyMultiRoomServices(false)
@@ -216,6 +251,12 @@ async function init() {
   // Periodically re-check whether we should be master, so a device that starts
   // playing always takes over even if its 'play' event never arrived
   setInterval(() => { void reconcileMaster() }, constants.multiroom.electionInterval)
+
+  // Watch for the projector powering on so films start without touching the button
+  if (constants.bluetoothPairingButton.connectTo && constants.audioToggle.autoFilmMode) {
+    console.log(`Watching for projector ${constants.bluetoothPairingButton.connectTo} to start film mode automatically`)
+    setInterval(() => { void pollProjector() }, constants.audioToggle.projectorPollInterval)
+  }
 }
 
 // Event: "play"

@@ -15,6 +15,7 @@ declare interface BluetoothPairingButtonController {
  */
 class BluetoothPairingButtonController extends EventEmitter {
   private lastButtonPress: number = 0
+  private probeUnavailableLogged: boolean = false
   private readonly debounceDelay: number = 500 // ms
   private buttonPollInterval: NodeJS.Timeout | null = null
   private testModeInterval: NodeJS.Timeout | null = null
@@ -146,6 +147,33 @@ class BluetoothPairingButtonController extends EventEmitter {
    * Connect to the device configured in BLUETOOTH_PAIRING_CONNECT_TO (e.g. projector).
    * No-op if connectTo is not set.
    */
+  /**
+   * Is the projector powered on and in range? Deliberately passive: l2ping pokes the
+   * link without opening an audio connection, so a device the user has manually
+   * dropped out of film mode never gets reconnected behind their back, which would
+   * push projector audio into the whole house.
+   */
+  public isProjectorReachable(): Promise<boolean> {
+    const { connectTo } = constants.bluetoothPairingButton
+    if (!connectTo) {
+      return Promise.resolve(false)
+    }
+
+    const normalizedMac = connectTo.trim().toUpperCase()
+    return new Promise((resolve) => {
+      exec(`l2ping -c 1 -t 2 ${normalizedMac}`, (err: any) => {
+        if (err && err.code === 127) {
+          if (!this.probeUnavailableLogged) {
+            this.probeUnavailableLogged = true
+            console.log('[Bluetooth] l2ping not available; projector auto-detect disabled')
+          }
+          return resolve(false)
+        }
+        resolve(!err)
+      })
+    })
+  }
+
   public async connectToProjector(): Promise<void> {
     const { connectTo } = constants.bluetoothPairingButton
     if (!connectTo) return
