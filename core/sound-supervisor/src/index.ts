@@ -177,7 +177,12 @@ async function reconcileMaster(): Promise<void> {
   }
   wasPlaying = hasLocalPlayback
 
-  if (election.shouldClaim({ selfIp: config.device.ip, isMaster: config.isMultiRoomMaster(), hasLocalPlayback })) {
+  if (election.shouldClaim({
+    selfIp: config.device.ip,
+    isMaster: config.isMultiRoomMaster(),
+    hasLocalPlayback,
+    locked: config.multiroom.forced || constants.multiroom.disallowUpdates
+  })) {
     console.log(`Playback detected, announcing ${config.device.ip} as multi-room master!`)
     // Apply locally rather than waiting to receive our own broadcast back.
     config.setMultiRoomMaster(config.device.ip)

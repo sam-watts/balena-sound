@@ -28,31 +28,31 @@ function test(name: string, run: () => void): void {
 
 test('an idle device never claims master', () => {
   const e: MasterElection = election()
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: false }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: false, locked: false }), false)
 })
 
 test('a playing device that is not master claims it', () => {
   const e: MasterElection = election()
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), true)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), true)
 })
 
 test('the master does not re-claim while it keeps playing (no claim storm)', () => {
   const e: MasterElection = election()
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: true, hasLocalPlayback: true }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: true, hasLocalPlayback: true, locked: false }), false)
 })
 
 test('repeat claims are rate limited, then allowed again after the cooldown', () => {
   const e: MasterElection = election(15000)
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), true)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), true)
 
   // A burst of sink events must not turn into a burst of announcements.
   clock.value += 1000
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false)
   clock.value += 1000
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false)
 
   clock.value += 15000
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), true)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), true)
 })
 
 test('an idle master accepts a claim from a peer, so stranded audio recovers', () => {
@@ -176,7 +176,7 @@ test('after yielding to a playing peer we stop competing for master', () => {
   // and re-claimed a heartbeat later, every 60s, restarting a snapclient each time.
   const e: MasterElection = election()
   e.deferTo(KITCHEN)
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false)
 })
 
 test('standing down lapses once the playing peer goes quiet', () => {
@@ -189,11 +189,11 @@ test('standing down lapses once the playing peer goes quiet', () => {
   e.deferTo(KITCHEN)
 
   clock.value += 60000
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false, 'still deferring at 60s')
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false, 'still deferring at 60s')
 
   // Nothing refreshed it, so the peer has stopped playing and we can take over.
   clock.value += 31000
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), true)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), true)
 })
 
 test('a re-asserting playing peer keeps refreshing the stand-down', () => {
@@ -208,7 +208,7 @@ test('a re-asserting playing peer keeps refreshing the stand-down', () => {
   for (let i = 0; i < 5; i++) {
     e.deferTo(KITCHEN)
     clock.value += 60000
-    assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false, `still deferring at cycle ${i}`)
+    assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false, `still deferring at cycle ${i}`)
   }
 })
 
@@ -218,13 +218,20 @@ test('standing down never blocks a device the tie break says should win', () => 
   // reclaim master, and Spotify started on kitchen reached no snapclient at all.
   const e: MasterElection = election()
   e.deferTo(LIVING_ROOM)
-  assert.strictEqual(e.shouldClaim({ selfIp: KITCHEN, isMaster: false, hasLocalPlayback: true }), true)
+  assert.strictEqual(e.shouldClaim({ selfIp: KITCHEN, isMaster: false, hasLocalPlayback: true, locked: false }), true)
 })
 
 test('standing down still holds against a peer that outranks us', () => {
   const e: MasterElection = election()
   e.deferTo(KITCHEN)
-  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true }), false)
+  assert.strictEqual(e.shouldClaim({ selfIp: LIVING_ROOM, isMaster: false, hasLocalPlayback: true, locked: false }), false)
+})
+
+test('a pinned master is never overridden by our own playback', () => {
+  // SOUND_MULTIROOM_MASTER pins the fleet. Without this the pinned device still
+  // claimed master for itself as soon as it played, splitting the fleet in two.
+  const e: MasterElection = election()
+  assert.strictEqual(e.shouldClaim({ selfIp: KITCHEN, isMaster: false, hasLocalPlayback: true, locked: true }), false)
 })
 
 test('the tie break ranks addresses numerically, not as strings', () => {

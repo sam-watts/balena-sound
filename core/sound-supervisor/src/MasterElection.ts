@@ -1,7 +1,8 @@
 export interface ClaimInputs {
   selfIp: string,
   isMaster: boolean,
-  hasLocalPlayback: boolean
+  hasLocalPlayback: boolean,
+  locked: boolean
 }
 
 export interface ElectionOptions {
@@ -78,8 +79,12 @@ export default class MasterElection {
   // Should we broadcast ourselves as master? Only when we are producing audio,
   // aren't already master, aren't standing down for a playing peer, and at most
   // once per cooldown.
-  shouldClaim({ selfIp, isMaster, hasLocalPlayback }: ClaimInputs): boolean {
-    if (isMaster || !hasLocalPlayback) {
+  shouldClaim({ selfIp, isMaster, hasLocalPlayback, locked }: ClaimInputs): boolean {
+    // A pinned master (SOUND_MULTIROOM_MASTER) has to be honoured here too, not just
+    // when a peer asks us to move. Checking it only on the accept path meant a pinned
+    // device would still claim master for itself the moment it played something,
+    // overriding the pin locally and splitting the fleet in two.
+    if (isMaster || !hasLocalPlayback || locked) {
       return false
     }
 
