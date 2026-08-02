@@ -101,18 +101,19 @@ class BluetoothPairingButtonController extends EventEmitter {
   private connectToDevice(mac: string): Promise<boolean> {
     const normalizedMac = mac.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {
-      exec(`bluetoothctl connect ${normalizedMac}`, (err, stdout, stderr) => {
-        // bluetoothctl exits 0 even when the connection fails, reporting the reason
-        // on stdout instead. Trusting the exit code alone meant a switched-off or
-        // simply wrong address was logged as a successful connection.
-        const output: string = `${stdout ?? ''}${stderr ?? ''}`.trim()
-        if (err || !/Connection successful/i.test(output)) {
-          console.error(`[BluetoothPairingButton] Connect to ${normalizedMac} failed: ${output || err?.message || 'no confirmation from bluetoothctl'}`)
-          resolve(false)
-          return
+      // bluetoothctl often prints only "Attempting to connect" and exits before the
+      // outcome is known, and it exits 0 either way, so its output cannot be trusted
+      // for success. Kick the connection off, then ask BlueZ what actually happened.
+      exec(`bluetoothctl connect ${normalizedMac}`, async () => {
+        for (let attempt = 0; attempt < 6; attempt++) {
+          await new Promise((r) => setTimeout(r, 1000))
+          if (await this.isProjectorConnected()) {
+            console.log('[BluetoothPairingButton] Connected to', normalizedMac)
+            return resolve(true)
+          }
         }
-        console.log('[BluetoothPairingButton] Connected to', normalizedMac)
-        resolve(true)
+        console.error(`[BluetoothPairingButton] Connect to ${normalizedMac} failed: still not connected after 6s`)
+        resolve(false)
       })
     })
   }

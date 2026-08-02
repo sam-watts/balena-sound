@@ -45,8 +45,10 @@ class AudioModeController extends EventEmitter {
                 this.initializeTestMode()
             }
         }
-        // Set initial mode
-        await this.setMode(this.currentMode)
+        // Settle the LED for the mode we start in, but do not announce a change.
+        // Emitting here made every supervisor restart look like a switch into
+        // MULTIROOM, which disconnected the projector on each deploy.
+        await this.setLed(this.currentMode === AudioOutputMode.LOCAL)
     }
 
     private initializeTestMode(): void {
