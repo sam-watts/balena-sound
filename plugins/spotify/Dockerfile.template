@@ -1,11 +1,39 @@
-# Tried 0.5.0 to pick up the keep-alive fix (librespot PR #1359) for the session
-# drops that stop playback every few minutes. It does fix those, but 0.5.0 predates
-# Spotify's current token flow: it 403s on hm://keymaster/token/authenticated and
-# then fails to resolve tracks ("Track should be available, but no alternatives
-# found"), so playback dies altogether. 0.4.2 still drops its session periodically
-# but can actually play, so stay here until a librespot >= 0.6 pulseaudio image
-# exists for this arch.
-FROM andrewn/librespot:0.4.2-pulseaudio
+# librespot built from source.
+#
+# There is no prebuilt pulseaudio image newer than 0.5.0, and 0.5.0 cannot be used:
+# it fixes the keep-alive session drops (librespot PR #1359) but predates Spotify's
+# current token flow, so it 403s on hm://keymaster/token/authenticated and then
+# fails to resolve tracks. 0.4.2 plays but drops its session every few minutes.
+# 0.8.0 has both the keep-alive rework and the current auth, so build it ourselves.
+#
+# hadolint ignore=DL3006
+FROM balenalib/%%BALENA_ARCH%%-debian:bookworm-build as build
+
+ARG LIBRESPOT_VERSION=0.8.0
+
+RUN install_packages build-essential pkg-config libpulse-dev ca-certificates curl
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Every feature here is load bearing, because --no-default-features drops all three:
+#   pulseaudio-backend      the audio block is reached over PULSE_SERVER, not ALSA
+#   rustls-tls-native-roots librespot-oauth refuses to compile without a TLS backend,
+#                           and rustls keeps OpenSSL out of the runtime image
+#   with-libmdns            zeroconf, without which the device never advertises
+#                           itself over Spotify Connect and cannot be selected
+RUN cargo install librespot --version "${LIBRESPOT_VERSION}" \
+      --no-default-features \
+      --features pulseaudio-backend,rustls-tls-native-roots,with-libmdns \
+      --locked --root /usr/local
+
+# hadolint ignore=DL3006
+FROM balenalib/%%BALENA_ARCH%%-debian:bookworm-run
+
+RUN install_packages libpulse0 ca-certificates bash
+
+COPY --from=build /usr/local/bin/librespot /usr/bin/librespot
 
 ENV PULSE_SERVER=tcp:localhost:4317
 
