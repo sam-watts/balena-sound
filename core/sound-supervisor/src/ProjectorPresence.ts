@@ -24,6 +24,13 @@ export default class ProjectorPresence {
     this.enteredAutomatically = false
   }
 
+  // True while the user has overridden us by hand. Callers use this to skip the
+  // active connection attempt, so an override does not keep dragging the projector
+  // back on to the Pi and pushing its audio into the whole house.
+  isSuppressed(): boolean {
+    return this.suppressed
+  }
+
   update({ reachable, isLocalMode }: PresenceInputs): PresenceAction {
     this.reachable = reachable
 

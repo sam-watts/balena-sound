@@ -33,6 +33,7 @@ const election: MasterElection = new MasterElection({
 const projectorPresence: ProjectorPresence = new ProjectorPresence()
 let switchingAutomatically: boolean = false
 let probingProjector: boolean = false
+let lastProjectorConnectAttempt: number = 0
 
 let hasLocalPlayback: boolean = false
 let wasPlaying: boolean = false
@@ -91,12 +92,23 @@ async function pollProjector(): Promise<void> {
     return
   }
 
-  // l2ping should answer within its own timeout, but a wedged Bluetooth stack
-  // would otherwise stack up a probe every poll.
   probingProjector = true
   let reachable: boolean
   try {
+    // Cheap first: ask BlueZ whether it is already connected.
     reachable = await pairingButtonController.isProjectorConnected()
+
+    // Nothing on the device reconnects a projector once it is powered on. It does
+    // not initiate, and the bluetooth block only sweeps its paired devices at
+    // startup and then gives up, so waiting passively means waiting forever. Reach
+    // out and connect it, throttled because each attempt costs a few seconds, and
+    // never while the user has overridden us by hand.
+    const now: number = Date.now()
+    if (!reachable && !projectorPresence.isSuppressed() && !audioModeController.isLocalMode()
+        && now - lastProjectorConnectAttempt >= constants.audioToggle.projectorConnectInterval) {
+      lastProjectorConnectAttempt = now
+      reachable = await pairingButtonController.connectToProjector()
+    }
   } finally {
     probingProjector = false
   }
@@ -196,7 +208,7 @@ async function init() {
   audioModeController = new AudioModeController({
     onPrepareLocal:
       constants.bluetoothPairingButton.connectTo
-        ? () => pairingButtonController.connectToProjector()
+        ? async () => { await pairingButtonController.connectToProjector() }
         : undefined,
   })
 

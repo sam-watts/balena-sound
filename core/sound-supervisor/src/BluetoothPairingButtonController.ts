@@ -182,10 +182,10 @@ class BluetoothPairingButtonController extends EventEmitter {
     })
   }
 
-  public async connectToProjector(): Promise<void> {
+  public async connectToProjector(): Promise<boolean> {
     const { connectTo } = constants.bluetoothPairingButton
-    if (!connectTo) return
-    await this.connectToDevice(connectTo)
+    if (!connectTo) return false
+    return this.connectToDevice(connectTo)
   }
 
   /**
