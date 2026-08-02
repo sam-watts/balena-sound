@@ -52,8 +52,36 @@ if [[ "$TARGET_STATE" == "local" ]]; then
 else
   # --- MULTIROOM mode: restore loopback modules with normal latency ---
 
+  # On a fresh start there is nothing to restore: balena-sound.pa has already wired
+  # the loopbacks and the default sink correctly. Just record the state. Without
+  # this the restore below runs on every boot (the state file lives in /tmp, so it
+  # is always empty at startup) and rewires a correct configuration into a broken
+  # one.
+  if [[ "$CURRENT_STATE" == "none" ]]; then
+    echo "$TARGET_STATE" > /tmp/audio-latency-state
+    exit 0
+  fi
+
   # Only reload if input/output sink config is available
   [[ -z "$INPUT_SINK" || -z "$OUTPUT_SINK" ]] && exit 1
+
+  # Note which streams LOCAL mode parked on the hardware sink, before reloading the
+  # loopbacks. This has to happen first: the output loopback we are about to load
+  # attaches its own sink input to that same hardware sink, and moving *that* onto
+  # balena-sound.input would be a feedback loop.
+  #
+  # Moving every sink input here (rather than just these) is what previously broke
+  # playback: the loopback reading balena-sound.input.monitor was moved onto
+  # balena-sound.input itself. It buzzes, and it holds the sink permanently RUNNING
+  # so the supervisor believes the device is always playing and fights its peer for
+  # multi-room master.
+  HW_SINK_INDEX=$(pactl list sinks short 2>/dev/null | awk -v n="$HW_SINK" '$2 == n { print $1; exit }')
+  HW_SINK_INDEX="${HW_SINK_INDEX:-$HW_SINK}"
+
+  PARKED_INPUTS=""
+  while read -r si_id si_sink _rest; do
+    [[ "$si_sink" == "$HW_SINK_INDEX" ]] && PARKED_INPUTS="$PARKED_INPUTS $si_id"
+  done < <(pactl list sink-inputs short 2>/dev/null)
 
   # Check if loopbacks are already loaded
   LOOPBACKS_LOADED=0
@@ -71,10 +99,9 @@ else
   # Restore default sink to balena-sound.input for normal routing
   pactl set-default-sink "balena-sound.input" 2>/dev/null || true
 
-  # Move all sink inputs back to balena-sound.input
-  while read -r si_id _ sink_name _rest; do
+  for si_id in $PARKED_INPUTS; do
     pactl move-sink-input "$si_id" "balena-sound.input" 2>/dev/null || true
-  done < <(pactl list sink-inputs short 2>/dev/null)
+  done
 
   echo "$TARGET_STATE" > /tmp/audio-latency-state
   echo "Audio latency set to multiroom (loopbacks restored, input ${NORMAL_LATENCY_MS}ms, output ${NORMAL_LATENCY_MS_OUT}ms)"
