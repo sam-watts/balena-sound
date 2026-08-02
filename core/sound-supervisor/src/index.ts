@@ -100,7 +100,7 @@ async function reconcileMaster(): Promise<void> {
   }
   wasPlaying = hasLocalPlayback
 
-  if (election.shouldClaim({ isMaster: config.isMultiRoomMaster(), hasLocalPlayback })) {
+  if (election.shouldClaim({ selfIp: config.device.ip, isMaster: config.isMultiRoomMaster(), hasLocalPlayback })) {
     console.log(`Playback detected, announcing ${config.device.ip} as multi-room master!`)
     // Apply locally rather than waiting to receive our own broadcast back.
     config.setMultiRoomMaster(config.device.ip)
@@ -248,7 +248,7 @@ fleetSubscriber.on('fleet-update', async (data: any) => {
   // config.multiroom.master is still us and we keep competing.
   if (data.master !== config.device.ip && config.multiroom.master === data.master) {
     if (claimantPlaying) {
-      election.deferTo()
+      election.deferTo(data.master)
     } else {
       // It has gone quiet, so stop standing down and let this device take over as
       // soon as it has something to play, rather than waiting out the window.

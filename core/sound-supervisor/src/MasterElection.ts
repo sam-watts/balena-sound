@@ -1,4 +1,5 @@
 export interface ClaimInputs {
+  selfIp: string,
   isMaster: boolean,
   hasLocalPlayback: boolean
 }
@@ -39,6 +40,7 @@ export default class MasterElection {
   private lastClaimAt: number = 0
   private lastAcceptAt: number = 0
   private deferUntil: number = 0
+  private deferredTo: string = ''
   private readonly claimCooldownMs: number
   private readonly acceptCooldownMs: number
   private readonly deferToPlayingMasterMs: number
@@ -57,7 +59,8 @@ export default class MasterElection {
   // soundcard input loops a capture device straight into it, so it never goes
   // idle) re-claims master the instant it yields, and the two ping-pong on every
   // fleet sync, restarting a snapclient each time.
-  deferTo(): void {
+  deferTo(master: string): void {
+    this.deferredTo = master
     this.deferUntil = this.now() + this.deferToPlayingMasterMs
   }
 
@@ -69,13 +72,23 @@ export default class MasterElection {
   // to and we can take over immediately rather than waiting out the window.
   clearDefer(): void {
     this.deferUntil = 0
+    this.deferredTo = ''
   }
 
   // Should we broadcast ourselves as master? Only when we are producing audio,
   // aren't already master, aren't standing down for a playing peer, and at most
   // once per cooldown.
-  shouldClaim({ isMaster, hasLocalPlayback }: ClaimInputs): boolean {
-    if (isMaster || !hasLocalPlayback || this.isDeferring()) {
+  shouldClaim({ selfIp, isMaster, hasLocalPlayback }: ClaimInputs): boolean {
+    if (isMaster || !hasLocalPlayback) {
+      return false
+    }
+
+    // Stand down only for a peer that outranks us. A device with a soundcard input
+    // reports playing permanently, because the capture loopback keeps its input
+    // sink RUNNING, so it refreshes our stand-down on every heartbeat forever. If
+    // that also silenced a device the tie break says should win, the peer would
+    // hold master indefinitely and our own audio would never reach a snapclient.
+    if (this.isDeferring() && !winsTieBreak(selfIp, this.deferredTo)) {
       return false
     }
 
