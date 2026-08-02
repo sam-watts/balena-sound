@@ -14,7 +14,6 @@ declare interface BluetoothPairingButtonController {
  */
 class BluetoothPairingButtonController extends EventEmitter {
   private lastButtonPress: number = 0
-  private probeUnavailableLogged: boolean = false
   private readonly debounceDelay: number = 500 // ms
   private buttonPollInterval: NodeJS.Timeout | null = null
   private testModeInterval: NodeJS.Timeout | null = null
@@ -153,28 +152,29 @@ class BluetoothPairingButtonController extends EventEmitter {
    * No-op if connectTo is not set.
    */
   /**
-   * Is the projector powered on and in range? Deliberately passive: l2ping pokes the
-   * link without opening an audio connection, so a device the user has manually
-   * dropped out of film mode never gets reconnected behind their back, which would
-   * push projector audio into the whole house.
+   * Is the projector powered on and connected?
+   *
+   * Asks BlueZ for the device's own state rather than probing the link. l2ping was
+   * tried first and looked tidier, but plenty of Bluetooth audio devices never
+   * answer an L2CAP echo, so it reported the projector absent while it was sitting
+   * there connected and playing.
+   *
+   * This is still passive: it reads state and never opens a connection, so a
+   * projector the user has manually dropped out of film mode is left alone.
    */
-  public isProjectorReachable(): Promise<boolean> {
+  public isProjectorConnected(): Promise<boolean> {
     const { connectTo } = constants.bluetoothPairingButton
     if (!connectTo) {
       return Promise.resolve(false)
     }
 
-    const normalizedMac = connectTo.trim().toUpperCase()
+    const normalizedMac = connectTo.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {
-      exec(`l2ping -c 1 -t 2 ${normalizedMac}`, (err: any) => {
-        if (err && err.code === 127) {
-          if (!this.probeUnavailableLogged) {
-            this.probeUnavailableLogged = true
-            console.log('[Bluetooth] l2ping not available; projector auto-detect disabled')
-          }
+      exec(`bluetoothctl info ${normalizedMac}`, (err, stdout) => {
+        if (err) {
           return resolve(false)
         }
-        resolve(!err)
+        resolve(/Connected:\s*yes/i.test(stdout ?? ''))
       })
     })
   }

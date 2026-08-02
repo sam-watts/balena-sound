@@ -96,7 +96,7 @@ async function pollProjector(): Promise<void> {
   probingProjector = true
   let reachable: boolean
   try {
-    reachable = await pairingButtonController.isProjectorReachable()
+    reachable = await pairingButtonController.isProjectorConnected()
   } finally {
     probingProjector = false
   }
