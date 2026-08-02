@@ -1,4 +1,11 @@
-FROM andrewn/librespot:0.5.0-pulseaudio
+# Tried 0.5.0 to pick up the keep-alive fix (librespot PR #1359) for the session
+# drops that stop playback every few minutes. It does fix those, but 0.5.0 predates
+# Spotify's current token flow: it 403s on hm://keymaster/token/authenticated and
+# then fails to resolve tracks ("Track should be available, but no alternatives
+# found"), so playback dies altogether. 0.4.2 still drops its session periodically
+# but can actually play, so stay here until a librespot >= 0.6 pulseaudio image
+# exists for this arch.
+FROM andrewn/librespot:0.4.2-pulseaudio
 
 ENV PULSE_SERVER=tcp:localhost:4317
 
