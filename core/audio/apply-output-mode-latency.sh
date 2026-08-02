@@ -62,10 +62,24 @@ source_stream_inputs() {
 mute_hw()   { pactl set-sink-mute "$HW_SINK" 1 2>/dev/null || true; }
 unmute_hw() { sleep 0.2; pactl set-sink-mute "$HW_SINK" 0 2>/dev/null || true; }
 
+# `pactl list modules short` is index, name, argument. Reading the third field and
+# comparing it to "module-loopback" therefore tests the argument, never the name, so
+# it never matched: nothing was ever unloaded, and the old "how many loopbacks are
+# there" check always counted zero and reloaded another pair on top. That is where
+# the duplicate loopbacks, and the feedback they caused, came from. Parse the long
+# form instead, where the name is unambiguous.
+loopback_module_ids() {
+  pactl list modules 2>/dev/null | awk '
+    /^Module #/ { id = substr($2, 2) }
+    /^[[:space:]]*Name:/ { if ($2 == "module-loopback" && id != "") print id }
+  '
+}
+
 unload_all_loopbacks() {
-  while read -r id _ name rest; do
-    [[ "$name" == "module-loopback" ]] && pactl unload-module "$id" 2>/dev/null || true
-  done < <(pactl list modules short 2>/dev/null)
+  local id
+  for id in $(loopback_module_ids); do
+    pactl unload-module "$id" 2>/dev/null || true
+  done
 }
 
 # Rebuild the full expected set of loopbacks from scratch.
