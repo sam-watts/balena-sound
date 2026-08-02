@@ -62,14 +62,48 @@ source_stream_inputs() {
 mute_hw()   { pactl set-sink-mute "$HW_SINK" 1 2>/dev/null || true; }
 unmute_hw() { sleep 0.2; pactl set-sink-mute "$HW_SINK" 0 2>/dev/null || true; }
 
+unload_all_loopbacks() {
+  while read -r id _ name rest; do
+    [[ "$name" == "module-loopback" ]] && pactl unload-module "$id" 2>/dev/null || true
+  done < <(pactl list modules short 2>/dev/null)
+}
+
+# Rebuild the full expected set of loopbacks from scratch.
+#
+# Counting them and topping up if there were "not enough" cannot work: it knows how
+# many exist, never which ones, so a missing loopback is invisible while repeated
+# runs stack duplicates. Duplicates are not cosmetic, they are audible feedback,
+# because a second copy can end up feeding balena-sound.input from a monitor.
+#
+# Tearing down first also fixes the soundcard input. LOCAL unloads every loopback
+# including the capture device's, and only rebuilding two of them left a turntable
+# silent until the container happened to restart.
+reload_loopbacks() {
+  unload_all_loopbacks
+
+  pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS source=balena-sound.input.monitor $INPUT_SINK 2>/dev/null || true
+  pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS_OUT source=balena-sound.output.monitor $OUTPUT_SINK 2>/dev/null || true
+
+  # Same rule start.sh applies at boot: only wire a capture device in if one exists
+  # and the user asked for it.
+  if [[ -n "$SOUND_ENABLE_SOUNDCARD_INPUT" ]]; then
+    local input_device
+    input_device=$(arecord -l 2>/dev/null | awk '/card [0-9]:/ { print $3 }' | head -1)
+    if [[ -n "$input_device" ]]; then
+      pactl load-module module-loopback "source=alsa_input.${input_device}.stereo-fallback" "sink=${INPUT_SINK_NAME}" 2>/dev/null || true
+      echo "Restored soundcard input from alsa_input.${input_device}.stereo-fallback"
+    fi
+  fi
+
+  sleep 0.2
+}
+
 if [[ "$TARGET_STATE" == "local" ]]; then
   # --- LOCAL: film mode. Source -> hardware, nothing in between. ---
   mute_hw
 
   # Unload every loopback; each one costs latency we are trying to remove.
-  while read -r id _ name rest; do
-    [[ "$name" == "module-loopback" ]] && pactl unload-module "$id" 2>/dev/null || true
-  done < <(pactl list modules short 2>/dev/null)
+  unload_all_loopbacks
 
   # New connections (a projector pairing over Bluetooth) should land on hardware.
   pactl set-default-sink "$HW_SINK" 2>/dev/null || true
@@ -98,16 +132,7 @@ else
 
   mute_hw
 
-  LOOPBACKS_LOADED=0
-  while read -r id _ name rest; do
-    [[ "$name" == "module-loopback" ]] && LOOPBACKS_LOADED=$((LOOPBACKS_LOADED + 1))
-  done < <(pactl list modules short 2>/dev/null)
-
-  if [[ "$LOOPBACKS_LOADED" -lt 2 ]]; then
-    pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS source=balena-sound.input.monitor $INPUT_SINK 2>/dev/null || true
-    pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS_OUT source=balena-sound.output.monitor $OUTPUT_SINK 2>/dev/null || true
-    sleep 0.2
-  fi
+  reload_loopbacks
 
   pactl set-default-sink "$INPUT_SINK_NAME" 2>/dev/null || true
 
