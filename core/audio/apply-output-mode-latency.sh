@@ -146,9 +146,14 @@ else
 
   mute_hw
 
-  reload_loopbacks
-
+  # Set the default sink BEFORE building the loopbacks. Changing the default moves
+  # streams off the old one, and film mode leaves the hardware sink as default, so
+  # doing this afterwards dragged the freshly created output loopback off the DAC
+  # and onto balena-sound.input. That silences the room, because snapclient audio
+  # then loops back into the input instead of reaching the speakers.
   pactl set-default-sink "$INPUT_SINK_NAME" 2>/dev/null || true
+
+  reload_loopbacks
 
   # Send the real sources back to the input sink. The loopbacks just reloaded are
   # skipped by source_stream_inputs, so they stay where they were created.
@@ -159,4 +164,12 @@ else
   unmute_hw
   echo "$TARGET_STATE" > /tmp/audio-latency-state
   echo "Audio mode MULTIROOM: loopbacks restored (input ${NORMAL_LATENCY_MS}ms, output ${NORMAL_LATENCY_MS_OUT}ms)"
+
+  # Log the resulting wiring. This path has silently mis-wired itself twice, and the
+  # symptom is a silent room rather than an error, so make it visible in the logs.
+  pactl list sink-inputs 2>/dev/null | awk '
+    /^Sink Input #/ { idx = substr($3, 2); drv = "" }
+    /^[[:space:]]*Driver:/ { drv = $2 }
+    /^[[:space:]]*Sink:/ { if (drv == "module-loopback.c") print "  loopback sink-input " idx " -> sink " $2 }
+  '
 fi
