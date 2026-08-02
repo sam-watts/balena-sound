@@ -52,6 +52,9 @@ export const constants = {
     // How often to actively try connecting the projector while it is absent. Each
     // attempt takes a few seconds, so this is slower than the poll itself.
     projectorConnectInterval: (checkInt(process.env.AUDIO_TOGGLE_PROJECTOR_CONNECT) ?? 30) * 1000,
+    // Consecutive absent polls before leaving film mode. A Bluetooth link drops in
+    // and out on its own, and every flap stops and restarts snapcast.
+    projectorAbsentSamples: checkInt(process.env.AUDIO_TOGGLE_PROJECTOR_ABSENT_SAMPLES) ?? 3,
   },
   bluetoothPairingButton: {
     enabled: checkBool(process.env.BLUETOOTH_PAIRING_BUTTON_ENABLED),

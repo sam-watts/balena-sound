@@ -30,7 +30,9 @@ const election: MasterElection = new MasterElection({
 // Film mode auto-detect. `switchingAutomatically` distinguishes our own mode changes
 // from a button press, so a manual exit can suppress auto-entry while the projector
 // is still sitting there powered on.
-const projectorPresence: ProjectorPresence = new ProjectorPresence()
+const projectorPresence: ProjectorPresence = new ProjectorPresence({
+  absentSamplesBeforeExit: constants.audioToggle.projectorAbsentSamples
+})
 let switchingAutomatically: boolean = false
 let probingProjector: boolean = false
 let lastProjectorConnectAttempt: number = 0

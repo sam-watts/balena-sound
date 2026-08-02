@@ -5,6 +5,11 @@ export interface PresenceInputs {
   isLocalMode: boolean
 }
 
+export interface PresenceOptions {
+  // Consecutive absent samples before believing the projector has really gone.
+  absentSamplesBeforeExit?: number
+}
+
 // Turns a stream of "can we see the projector" samples into film mode transitions.
 //
 // Kept separate from the polling and the Bluetooth calls so the awkward parts are
@@ -14,6 +19,12 @@ export default class ProjectorPresence {
   private reachable: boolean = false
   private suppressed: boolean = false
   private enteredAutomatically: boolean = false
+  private absentSamples: number = 0
+  private readonly absentSamplesBeforeExit: number
+
+  constructor(options: PresenceOptions = {}) {
+    this.absentSamplesBeforeExit = options.absentSamplesBeforeExit ?? 3
+  }
 
   // The button was pressed. Leaving film mode by hand while the projector is still
   // sitting there has to stick, otherwise the next poll drags us straight back in
@@ -35,6 +46,14 @@ export default class ProjectorPresence {
     this.reachable = reachable
 
     if (!reachable) {
+      // A Bluetooth link drops in and out on its own. Acting on a single absent
+      // sample made film mode flap, and every flap stops and restarts snapcast, so
+      // wait for the projector to stay gone before believing it.
+      this.absentSamples++
+      if (this.absentSamples < this.absentSamplesBeforeExit) {
+        return 'none'
+      }
+
       // Projector gone: any manual override has served its purpose.
       this.suppressed = false
 
@@ -46,6 +65,8 @@ export default class ProjectorPresence {
       }
       return 'none'
     }
+
+    this.absentSamples = 0
 
     if (!isLocalMode && !this.suppressed) {
       this.enteredAutomatically = true
