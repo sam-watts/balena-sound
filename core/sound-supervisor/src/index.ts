@@ -27,6 +27,33 @@ const election: MasterElection = new MasterElection({
 let hasLocalPlayback: boolean = false
 let reconciling: boolean = false
 
+// Master election reads the input sink state over its own PulseAudio connection.
+// Sharing the audio block's connection is not safe: that socket also carries the
+// event subscription, and the client library drops a pending reply whenever a
+// partial read arrives before a new packet header. After that every request on the
+// socket times out forever, which is why this also rebuilds on repeated failure
+// instead of logging the same timeout every few seconds.
+let electionAudio: BalenaAudio | undefined
+let electionFailures: number = 0
+
+async function getElectionAudio(): Promise<BalenaAudio> {
+  if (!electionAudio) {
+    const audio: BalenaAudio = new BalenaAudio(`tcp:${config.device.ip}:4317`, false, 'BalenaSoundElection')
+    await audio.listen()
+    electionAudio = audio
+  }
+  return electionAudio
+}
+
+function dropElectionAudio(): void {
+  try {
+    (<any>electionAudio)?.socket?.destroy()
+  } catch {
+    // Socket already gone; we only care that the next reconcile reconnects.
+  }
+  electionAudio = undefined
+}
+
 // Decide whether this device should be the multi-room master.
 //
 // This is deliberately level triggered rather than driven only by the audio block's
@@ -42,10 +69,21 @@ async function reconcileMaster(): Promise<void> {
 
   reconciling = true
   try {
-    const sink = await audioBlock.getSink(constants.inputSink)
+    const audio: BalenaAudio = await getElectionAudio()
+    const sink = await audio.getSink(constants.inputSink)
     hasLocalPlayback = sink.state === SinkState.RUNNING
+    electionFailures = 0
   } catch (error) {
-    console.log(`Master election: unable to read '${constants.inputSink}': ${error.message}`)
+    electionFailures++
+    // Report the first failure and then only occasionally, so a dead connection
+    // doesn't fill the logs with one line every few seconds.
+    if (electionFailures === 1 || electionFailures % 15 === 0) {
+      console.log(`Master election: unable to read '${constants.inputSink}' (${electionFailures}x): ${error.message}`)
+    }
+    if (electionFailures >= 3) {
+      console.log('Master election: reconnecting to the audio block')
+      dropElectionAudio()
+    }
     return
   } finally {
     reconciling = false
