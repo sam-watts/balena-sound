@@ -31,7 +31,11 @@ export const constants = {
     // Minimum gap between announcing ourselves as master, and between acting on
     // another device's announcement. Each acceptance restarts the snapclient.
     claimCooldown: (checkInt(process.env.SOUND_MULTIROOM_CLAIM_COOLDOWN) ?? 15) * 1000,
-    acceptCooldown: (checkInt(process.env.SOUND_MULTIROOM_ACCEPT_COOLDOWN) ?? 15) * 1000
+    acceptCooldown: (checkInt(process.env.SOUND_MULTIROOM_ACCEPT_COOLDOWN) ?? 15) * 1000,
+    // How long to stop competing for master after yielding to a device that is
+    // actually producing audio. Refreshed while that device keeps re-asserting
+    // itself, so it only lapses once the other device goes quiet.
+    deferToPlayingMaster: (checkInt(process.env.SOUND_MULTIROOM_DEFER) ?? 90) * 1000
   },
   volume: checkInt(process.env.SOUND_VOLUME) ?? 75,
   inputSink: process.env.SOUND_INPUT_SINK ?? 'balena-sound.input',

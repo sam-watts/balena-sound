@@ -170,6 +170,48 @@ test('accepting is rate limited, bounding how often the snapclient restarts', ()
   assert.strictEqual(claim(KITCHEN), true)
 })
 
+test('after yielding to a playing peer we stop competing for master', () => {
+  // The observed ping-pong: living_room has a turntable looped into its input sink,
+  // so the sink is RUNNING even with nothing on the platter. It yielded to kitchen
+  // and re-claimed a heartbeat later, every 60s, restarting a snapclient each time.
+  const e: MasterElection = election()
+  e.deferTo()
+  assert.strictEqual(e.shouldClaim({ isMaster: false, hasLocalPlayback: true }), false)
+})
+
+test('standing down lapses once the playing peer goes quiet', () => {
+  const e: MasterElection = new MasterElection({
+    claimCooldownMs: 0,
+    deferToPlayingMasterMs: 90000,
+    now: () => clock.value
+  })
+  clock.value = 100000
+  e.deferTo()
+
+  clock.value += 60000
+  assert.strictEqual(e.shouldClaim({ isMaster: false, hasLocalPlayback: true }), false, 'still deferring at 60s')
+
+  // Nothing refreshed it, so the peer has stopped playing and we can take over.
+  clock.value += 31000
+  assert.strictEqual(e.shouldClaim({ isMaster: false, hasLocalPlayback: true }), true)
+})
+
+test('a re-asserting playing peer keeps refreshing the stand-down', () => {
+  const e: MasterElection = new MasterElection({
+    claimCooldownMs: 0,
+    deferToPlayingMasterMs: 90000,
+    now: () => clock.value
+  })
+  clock.value = 100000
+
+  // Peer re-asserts itself every 60s while it keeps playing.
+  for (let i = 0; i < 5; i++) {
+    e.deferTo()
+    clock.value += 60000
+    assert.strictEqual(e.shouldClaim({ isMaster: false, hasLocalPlayback: true }), false, `still deferring at cycle ${i}`)
+  }
+})
+
 test('the tie break ranks addresses numerically, not as strings', () => {
   // '192.168.0.155' < '192.168.0.80' as a string, but .80 is the lower address.
   assert.strictEqual(KITCHEN < LIVING_ROOM, false, 'precondition: string order is misleading here')

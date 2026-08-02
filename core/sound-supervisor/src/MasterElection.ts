@@ -3,6 +3,13 @@ export interface ClaimInputs {
   hasLocalPlayback: boolean
 }
 
+export interface ElectionOptions {
+  claimCooldownMs?: number,
+  acceptCooldownMs?: number,
+  deferToPlayingMasterMs?: number,
+  now?: () => number
+}
+
 export interface AcceptInputs {
   claimant: string,
   claimantPlaying: boolean,
@@ -11,12 +18,6 @@ export interface AcceptInputs {
   isMaster: boolean,
   hasLocalPlayback: boolean,
   locked: boolean
-}
-
-export interface ElectionOptions {
-  claimCooldownMs?: number,
-  acceptCooldownMs?: number,
-  now?: () => number
 }
 
 // Decides when this device should claim multi-room master, and when it should
@@ -37,20 +38,44 @@ export interface ElectionOptions {
 export default class MasterElection {
   private lastClaimAt: number = 0
   private lastAcceptAt: number = 0
+  private deferUntil: number = 0
   private readonly claimCooldownMs: number
   private readonly acceptCooldownMs: number
+  private readonly deferToPlayingMasterMs: number
   private readonly now: () => number
 
   constructor(options: ElectionOptions = {}) {
     this.claimCooldownMs = options.claimCooldownMs ?? 15000
     this.acceptCooldownMs = options.acceptCooldownMs ?? 15000
+    this.deferToPlayingMasterMs = options.deferToPlayingMasterMs ?? 90000
     this.now = options.now ?? (() => Date.now())
   }
 
-  // Should we broadcast ourselves as master? Only when we are producing audio and
-  // aren't already master, at most once per cooldown.
+  // Another device that is producing audio holds master. Stand down until this
+  // expires, refreshed every time that device re-asserts itself while still
+  // playing. Without this a device whose input sink is permanently RUNNING (a
+  // soundcard input loops a capture device straight into it, so it never goes
+  // idle) re-claims master the instant it yields, and the two ping-pong on every
+  // fleet sync, restarting a snapclient each time.
+  deferTo(): void {
+    this.deferUntil = this.now() + this.deferToPlayingMasterMs
+  }
+
+  isDeferring(): boolean {
+    return this.now() < this.deferUntil
+  }
+
+  // The master has told us it stopped playing, so there is nothing left to defer
+  // to and we can take over immediately rather than waiting out the window.
+  clearDefer(): void {
+    this.deferUntil = 0
+  }
+
+  // Should we broadcast ourselves as master? Only when we are producing audio,
+  // aren't already master, aren't standing down for a playing peer, and at most
+  // once per cooldown.
   shouldClaim({ isMaster, hasLocalPlayback }: ClaimInputs): boolean {
-    if (isMaster || !hasLocalPlayback) {
+    if (isMaster || !hasLocalPlayback || this.isDeferring()) {
       return false
     }
 

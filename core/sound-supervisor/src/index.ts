@@ -22,9 +22,11 @@ let audioModeController: AudioModeController
 // Multi-room master election
 const election: MasterElection = new MasterElection({
   claimCooldownMs: constants.multiroom.claimCooldown,
-  acceptCooldownMs: constants.multiroom.acceptCooldown
+  acceptCooldownMs: constants.multiroom.acceptCooldown,
+  deferToPlayingMasterMs: constants.multiroom.deferToPlayingMaster
 })
 let hasLocalPlayback: boolean = false
+let wasPlaying: boolean = false
 let reconciling: boolean = false
 
 // Master election reads the input sink state over its own PulseAudio connection.
@@ -88,6 +90,15 @@ async function reconcileMaster(): Promise<void> {
   } finally {
     reconciling = false
   }
+
+  // Tell the fleet as soon as we stop playing, so a device waiting on us can take
+  // over in seconds instead of waiting out its stand-down window or the next
+  // fleet-sync heartbeat.
+  if (wasPlaying && !hasLocalPlayback && config.isMultiRoomMaster()) {
+    console.log(`Playback stopped on ${config.device.ip}, releasing multi-room master`)
+    fleetPublisher.publish('fleet-update', { type: 'master', master: config.device.ip, playing: false })
+  }
+  wasPlaying = hasLocalPlayback
 
   if (election.shouldClaim({ isMaster: config.isMultiRoomMaster(), hasLocalPlayback })) {
     console.log(`Playback detected, announcing ${config.device.ip} as multi-room master!`)
@@ -211,12 +222,14 @@ fleetSubscriber.on('fleet-update', async (data: any) => {
     console.log(data)
   }
 
+  const claimantPlaying: boolean = data.playing === true
+
   const accepted: boolean = election.shouldAccept({
     claimant: data.master,
     // Absent on a re-assert from a device that isn't producing audio, and on any
     // peer still running an older build. Treated as "not playing" either way, so
     // we never hand master to a device we can't confirm has audio.
-    claimantPlaying: data.playing === true,
+    claimantPlaying,
     selfIp: config.device.ip,
     isNewMaster: config.isNewMultiRoomMaster(data.master),
     isMaster: config.isMultiRoomMaster(),
@@ -227,6 +240,20 @@ fleetSubscriber.on('fleet-update', async (data: any) => {
   if (accepted) {
     console.log(`Multi-room master has changed to ${data.master}, restarting snapcast-client...`)
     config.setMultiRoomMaster(data.master)
+  }
+
+  // Stand down while a device that is actually producing audio holds master,
+  // whether we just yielded to it or it is re-asserting itself. Only once it is
+  // genuinely our master: if we rejected the claim because we are the one playing,
+  // config.multiroom.master is still us and we keep competing.
+  if (data.master !== config.device.ip && config.multiroom.master === data.master) {
+    if (claimantPlaying) {
+      election.deferTo()
+    } else {
+      // It has gone quiet, so stop standing down and let this device take over as
+      // soon as it has something to play, rather than waiting out the window.
+      election.clearDefer()
+    }
   }
 })
 
