@@ -32,6 +32,7 @@ const election: MasterElection = new MasterElection({
 // is still sitting there powered on.
 const projectorPresence: ProjectorPresence = new ProjectorPresence()
 let switchingAutomatically: boolean = false
+let probingProjector: boolean = false
 
 let hasLocalPlayback: boolean = false
 let wasPlaying: boolean = false
@@ -86,11 +87,20 @@ function applyMultiRoomServices(running: boolean): void {
 }
 
 async function pollProjector(): Promise<void> {
-  if (!constants.bluetoothPairingButton.connectTo || !constants.audioToggle.autoFilmMode) {
+  if (probingProjector || !constants.bluetoothPairingButton.connectTo || !constants.audioToggle.autoFilmMode) {
     return
   }
 
-  const reachable: boolean = await pairingButtonController.isProjectorReachable()
+  // l2ping should answer within its own timeout, but a wedged Bluetooth stack
+  // would otherwise stack up a probe every poll.
+  probingProjector = true
+  let reachable: boolean
+  try {
+    reachable = await pairingButtonController.isProjectorReachable()
+  } finally {
+    probingProjector = false
+  }
+
   const action = projectorPresence.update({ reachable, isLocalMode: audioModeController.isLocalMode() })
   if (action === 'none') {
     return
