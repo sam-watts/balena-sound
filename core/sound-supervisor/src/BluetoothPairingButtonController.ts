@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { exec } from 'child_process'
 import * as fs from 'fs'
 import { constants } from './constants'
+import { debugLog } from './debugLog'
 
 declare interface BluetoothPairingButtonController {
   on(event: 'pairingRequested', listener: () => void): this
@@ -101,7 +102,15 @@ class BluetoothPairingButtonController extends EventEmitter {
   private connectToDevice(mac: string): Promise<boolean> {
     const normalizedMac = mac.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {
+      // #region agent log
+      const _t0 = Date.now()
+      debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'E', location: 'BluetoothPairingButtonController.connectToDevice:start', message: 'bluetoothctl connect started', data: { mac: normalizedMac, t: _t0 } })
+      // #endregion
       exec(`bluetoothctl connect ${normalizedMac}`, (err, _stdout, stderr) => {
+        const duration = Date.now() - _t0
+        // #region agent log
+        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'E', location: 'BluetoothPairingButtonController.connectToDevice:done', message: 'bluetoothctl connect finished', data: { ok: !err, durationMs: duration, t: Date.now() } })
+        // #endregion
         if (err) {
           console.error('[BluetoothPairingButton] Connect failed:', err.message)
           if (stderr) console.error('[BluetoothPairingButton]', stderr)

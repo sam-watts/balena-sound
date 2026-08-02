@@ -1,0 +1,6 @@
+FROM docker:24-cli
+
+COPY restart.sh /restart.sh
+RUN chmod +x /restart.sh
+
+CMD ["/restart.sh"]

@@ -4,6 +4,7 @@ import { constants } from './constants'
 import BalenaAudio from 'balena-audio'
 import * as fs from 'fs'
 import { exec } from 'child_process'
+import { debugLog } from './debugLog'
 
 declare interface AudioModeController {
     on(event: 'modeChanged', listener: (mode: AudioOutputMode) => void): this;
@@ -16,10 +17,13 @@ class AudioModeController extends EventEmitter {
     private readonly debounceDelay: number = 300 // ms
     private audioBlock: BalenaAudio
     private buttonPollInterval: NodeJS.Timeout | null = null
+    private ledPulseInterval: NodeJS.Timeout | null = null
+    private onPrepareLocal?: () => Promise<void>
 
-    constructor(audioBlock: BalenaAudio) {
+    constructor(audioBlock: BalenaAudio, options?: { onPrepareLocal?: () => Promise<void> }) {
         super()
         this.audioBlock = audioBlock
+        this.onPrepareLocal = options?.onPrepareLocal
         if (constants.audioToggle.enabled) {
             this.initialize()
         }
@@ -148,29 +152,88 @@ class AudioModeController extends EventEmitter {
         })
     }
 
+    private startLedPulse(): void {
+        this.stopLedPulse()
+        let ledOn = false
+        this.ledPulseInterval = setInterval(() => {
+            ledOn = !ledOn
+            this.setLed(ledOn)
+        }, 250) // 250ms on, 250ms off = 2 pulses per second
+    }
+
+    private stopLedPulse(): void {
+        if (this.ledPulseInterval) {
+            clearInterval(this.ledPulseInterval)
+            this.ledPulseInterval = null
+        }
+    }
+
     private async setSink(targetSinkId: number): Promise<void> {
-        try {
-            console.log(`Switching audio to sink ID: ${targetSinkId}`)
-            await this.audioBlock.moveSinkInput(0, targetSinkId)
-            console.log(`Audio routing changed: sink input 0 moved to sink ${targetSinkId}`)
-        } catch (error) {
-            console.error(`Failed to switch audio to sink ID ${targetSinkId}:`, error)
+        const maxAttempts = 5
+        const retryDelayMs = 2000
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                // #region agent log
+                debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'A', location: 'AudioModeController.setSink:entry', message: 'setSink started', data: { targetSinkId, attempt, t: Date.now() } })
+                // #endregion
+                console.log(`Switching audio to sink ID: ${targetSinkId}${attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : ''}`)
+                const t0 = Date.now()
+                await this.audioBlock.moveSinkInput(0, targetSinkId)
+                const duration = Date.now() - t0
+                // #region agent log
+                debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'A', location: 'AudioModeController.setSink:exit', message: 'setSink finished', data: { targetSinkId, durationMs: duration, t: Date.now() } })
+                // #endregion
+                console.log(`Audio routing changed: sink input 0 moved to sink ${targetSinkId}`)
+                return
+            } catch (error) {
+                console.error(`Failed to switch audio to sink ID ${targetSinkId}:`, error)
+                if (attempt < maxAttempts) {
+                    console.log(`Retrying in ${retryDelayMs}ms (audio block may be reconfiguring)...`)
+                    await this.delay(retryDelayMs)
+                }
+            }
         }
     }
 
     private async setMode(mode: AudioOutputMode): Promise<void> {
+        // #region agent log
+        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'C', location: 'AudioModeController.setMode:entry', message: 'setMode started', data: { mode, t: Date.now() } })
+        // #endregion
         this.currentMode = mode
 
-        if (mode === AudioOutputMode.LOCAL) {
-            console.log('>>> Switching to LOCAL mode (Audio -> speakers directly)')
-            await this.setSink(constants.audioToggle.localSinkId)
-            this.setLed(true)
-        } else {
-            console.log('>>> Switching to MULTIROOM mode (Audio -> snapcast)')
-            await this.setSink(constants.audioToggle.snapcastSinkId)
+        // Pulse LED while switching to give immediate feedback
+        this.startLedPulse()
+
+        try {
+            if (mode === AudioOutputMode.LOCAL) {
+                console.log('>>> Switching to LOCAL mode (Audio -> speakers directly)')
+                if (this.onPrepareLocal) {
+                    // #region agent log
+                    debugLog({ sessionId: '2dea88', runId: 'post-fix', hypothesisId: 'fix', location: 'AudioModeController.setMode:beforePrepareLocal', message: 'connect before sink', data: { t: Date.now() } })
+                    // #endregion
+                    await this.onPrepareLocal()
+                    // #region agent log
+                    debugLog({ sessionId: '2dea88', runId: 'post-fix', hypothesisId: 'fix', location: 'AudioModeController.setMode:afterPrepareLocal', message: 'prepareLocal done, now setSink', data: { t: Date.now() } })
+                    // #endregion
+                }
+                await this.setSink(constants.audioToggle.localSinkId)
+                this.stopLedPulse()
+                this.setLed(true)
+            } else {
+                console.log('>>> Switching to MULTIROOM mode (Audio -> snapcast)')
+                await this.setSink(constants.audioToggle.snapcastSinkId)
+                this.stopLedPulse()
+                this.setLed(false)
+            }
+        } catch (error) {
+            this.stopLedPulse()
             this.setLed(false)
+            throw error
         }
 
+        // #region agent log
+        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'C', location: 'AudioModeController.setMode:beforeEmit', message: 'about to emit modeChanged', data: { mode, t: Date.now() } })
+        // #endregion
         // Emit event for other components to react
         this.emit('modeChanged', mode)
     }
@@ -195,6 +258,7 @@ class AudioModeController extends EventEmitter {
     }
 
     public async cleanup(): Promise<void> {
+        this.stopLedPulse()
         if (this.buttonPollInterval) {
             clearInterval(this.buttonPollInterval)
             this.buttonPollInterval = null

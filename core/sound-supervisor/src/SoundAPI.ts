@@ -15,6 +15,7 @@ const VERSION = fs.readFileSync('VERSION', 'utf-8')
 export default class SoundAPI {
   private api: Application
   private sdk: BalenaSDK
+  private getAudioOutputMode?: () => string
 
   constructor(
     public config: SoundConfig,
@@ -51,6 +52,11 @@ export default class SoundAPI {
     this.api.post('/mode', (req, res) => {
       let updated: boolean = this.config.setMode(req.body.mode)
       res.json({ mode: this.config.mode, updated })
+    })
+
+    // Audio output mode (LOCAL = direct/low latency, MULTIROOM = snapcast). Used by audio container to switch loopback latency.
+    this.api.get('/audio/output-mode', (_req, res) => {
+      res.send(this.getAudioOutputMode?.() ?? 'MULTIROOM')
     })
 
     // Audio block
@@ -106,6 +112,10 @@ export default class SoundAPI {
     this.api.use((err: Error, _req, res, _next) => {
       res.status(500).json({ error: err.message })
     })
+  }
+
+  public setAudioOutputModeGetter(fn: () => string): void {
+    this.getAudioOutputMode = fn
   }
 
   public async listen(port: number): Promise<void> {

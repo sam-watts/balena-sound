@@ -95,4 +95,19 @@ if [[ -n "$SOUND_ENABLE_SOUNDCARD_INPUT" ]]; then
   route_input_source
 fi
 
-exec pulseaudio
+# Save sink names for apply-output-mode-latency.sh (switches loopback latency when audio output mode is LOCAL)
+grep "balena-sound.input.monitor" "$CONFIG_FILE" | sed -n 's/.*\(sink=[^ ]*\).*/\1/p' > /tmp/balena-sound-input-sink
+grep "balena-sound.output.monitor" "$CONFIG_FILE" | sed -n 's/.*\(sink=[^ ]*\).*/\1/p' > /tmp/balena-sound-output-sink
+
+# Run PulseAudio in background (same binary as before, no --start) so we can run the latency watcher.
+# Shell stays PID 1; trap forwards SIGTERM/SIGINT to PulseAudio for clean shutdown.
+pulseaudio &
+PA_PID=$!
+trap 'kill $PA_PID 2>/dev/null; exit 0' SIGTERM SIGINT
+
+sleep 3
+
+# Watcher: when supervisor reports LOCAL (audio toggle), apply low loopback latency; when MULTIROOM, apply normal.
+(while true; do /usr/src/apply-output-mode-latency.sh 2>/dev/null; sleep 2; done) &
+
+wait $PA_PID

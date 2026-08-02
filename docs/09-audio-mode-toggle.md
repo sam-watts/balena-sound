@@ -52,6 +52,21 @@ When in MULTIROOM mode:
 - Normal multiroom coordination resumes
 - Audio is distributed via snapcast with the usual balenaSound processing
 
+### Low latency in LOCAL mode (e.g. for films)
+
+When you switch to **LOCAL**, the audio container bypasses PulseAudio loopback modules entirely and routes sink inputs directly to the hardware output. This eliminates ~68-136ms of loopback latency. Combined with reduced PulseAudio daemon buffer sizes (10ms x 2 fragments = 20ms, down from the default ~100ms), LOCAL mode total latency is roughly:
+
+| Stage | Latency |
+|-------|---------|
+| Bluetooth A2DP (SBC codec) | ~100-200ms |
+| PulseAudio daemon buffers | ~20ms |
+| ALSA output buffer | ~20-50ms |
+| **Total** | **~140-270ms** |
+
+This puts audio within acceptable lip-sync range for film watching (EBU R37: up to 185ms lag acceptable).
+
+When you switch back to **MULTIROOM**, the loopback modules are reloaded with normal latency (200ms) and routing is restored through `balena-sound.input` for snapcast distribution. The watcher polls every 2 seconds, so the full transition completes within 2 seconds of a mode change.
+
 ## Sink Discovery
 
 To find the correct sink IDs for your system, you can check the logs when the sound-supervisor starts, or use the support endpoint:
