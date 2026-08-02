@@ -2,7 +2,6 @@ import { EventEmitter } from 'events'
 import { exec } from 'child_process'
 import * as fs from 'fs'
 import { constants } from './constants'
-import { debugLog } from './debugLog'
 
 declare interface BluetoothPairingButtonController {
   on(event: 'pairingRequested', listener: () => void): this
@@ -103,30 +102,36 @@ class BluetoothPairingButtonController extends EventEmitter {
   private connectToDevice(mac: string): Promise<boolean> {
     const normalizedMac = mac.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {
-      // #region agent log
-      const _t0 = Date.now()
-      debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'E', location: 'BluetoothPairingButtonController.connectToDevice:start', message: 'bluetoothctl connect started', data: { mac: normalizedMac, t: _t0 } })
-      // #endregion
-      exec(`bluetoothctl connect ${normalizedMac}`, (err, _stdout, stderr) => {
-        const duration = Date.now() - _t0
-        // #region agent log
-        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'E', location: 'BluetoothPairingButtonController.connectToDevice:done', message: 'bluetoothctl connect finished', data: { ok: !err, durationMs: duration, t: Date.now() } })
-        // #endregion
-        if (err) {
-          console.error('[BluetoothPairingButton] Connect failed:', err.message)
-          if (stderr) console.error('[BluetoothPairingButton]', stderr)
+      exec(`bluetoothctl connect ${normalizedMac}`, (err, stdout, stderr) => {
+        // bluetoothctl exits 0 even when the connection fails, reporting the reason
+        // on stdout instead. Trusting the exit code alone meant a switched-off or
+        // simply wrong address was logged as a successful connection.
+        const output: string = `${stdout ?? ''}${stderr ?? ''}`.trim()
+        if (err || !/Connection successful/i.test(output)) {
+          console.error(`[BluetoothPairingButton] Connect to ${normalizedMac} failed: ${output || err?.message || 'no confirmation from bluetoothctl'}`)
           resolve(false)
-        } else {
-          console.log('[BluetoothPairingButton] Connected to', normalizedMac)
-          resolve(true)
+          return
         }
+        console.log('[BluetoothPairingButton] Connected to', normalizedMac)
+        resolve(true)
       })
     })
   }
 
-  /**
-   * Disconnect from a device by MAC.
-   */
+  /** Everything bluetoothctl knows about, so a misconfigured address is visible. */
+  public listDevices(): Promise<string> {
+    return new Promise((resolve) => {
+      exec('bluetoothctl devices', (err, stdout) => {
+        if (err) {
+          return resolve(`error: ${err.message}`)
+        }
+        exec('bluetoothctl paired-devices', (_e2, paired) => {
+          resolve(`# known devices\n${stdout ?? ''}\n# paired devices\n${paired ?? ''}`)
+        })
+      })
+    })
+  }
+
   private disconnectFromDevice(mac: string): Promise<boolean> {
     const normalizedMac = mac.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {

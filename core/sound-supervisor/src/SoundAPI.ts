@@ -77,6 +77,13 @@ export default class SoundAPI {
       }))
     }
 
+    // Bluetooth diagnostics: what does the adapter actually know about?
+    if (this.pairingButtonController) {
+      this.api.get('/bluetooth/devices', asyncHandler(async (_req, res) =>
+        res.type('text/plain').send(await this.pairingButtonController!.listDevices())
+      ))
+    }
+
     // Device management
     this.api.post('/device/restart', asyncHandler(async (_req, res) => res.json(await restartDevice())))
     this.api.post('/device/reboot', asyncHandler(async (_req, res) => res.json(await rebootDevice())))
