@@ -1,10 +1,8 @@
 import { EventEmitter } from 'events'
 import { AudioOutputMode } from './types'
 import { constants } from './constants'
-import BalenaAudio from 'balena-audio'
 import * as fs from 'fs'
 import { exec } from 'child_process'
-import { debugLog } from './debugLog'
 
 declare interface AudioModeController {
     on(event: 'modeChanged', listener: (mode: AudioOutputMode) => void): this;
@@ -15,14 +13,12 @@ class AudioModeController extends EventEmitter {
     private currentMode: AudioOutputMode = AudioOutputMode.MULTIROOM
     private lastButtonPress: number = 0
     private readonly debounceDelay: number = 300 // ms
-    private audioBlock: BalenaAudio
     private buttonPollInterval: NodeJS.Timeout | null = null
     private ledPulseInterval: NodeJS.Timeout | null = null
     private onPrepareLocal?: () => Promise<void>
 
-    constructor(audioBlock: BalenaAudio, options?: { onPrepareLocal?: () => Promise<void> }) {
+    constructor(options?: { onPrepareLocal?: () => Promise<void> }) {
         super()
-        this.audioBlock = audioBlock
         this.onPrepareLocal = options?.onPrepareLocal
         if (constants.audioToggle.enabled) {
             this.initialize()
@@ -168,37 +164,11 @@ class AudioModeController extends EventEmitter {
         }
     }
 
-    private async setSink(targetSinkId: number): Promise<void> {
-        const maxAttempts = 5
-        const retryDelayMs = 2000
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                // #region agent log
-                debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'A', location: 'AudioModeController.setSink:entry', message: 'setSink started', data: { targetSinkId, attempt, t: Date.now() } })
-                // #endregion
-                console.log(`Switching audio to sink ID: ${targetSinkId}${attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : ''}`)
-                const t0 = Date.now()
-                await this.audioBlock.moveSinkInput(0, targetSinkId)
-                const duration = Date.now() - t0
-                // #region agent log
-                debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'A', location: 'AudioModeController.setSink:exit', message: 'setSink finished', data: { targetSinkId, durationMs: duration, t: Date.now() } })
-                // #endregion
-                console.log(`Audio routing changed: sink input 0 moved to sink ${targetSinkId}`)
-                return
-            } catch (error) {
-                console.error(`Failed to switch audio to sink ID ${targetSinkId}:`, error)
-                if (attempt < maxAttempts) {
-                    console.log(`Retrying in ${retryDelayMs}ms (audio block may be reconfiguring)...`)
-                    await this.delay(retryDelayMs)
-                }
-            }
-        }
-    }
-
+    // Owns the button, the LED and which mode we are in. Nothing here touches
+    // PulseAudio: apply-output-mode-latency.sh in the audio container is the single
+    // owner of the routing. Two components rewiring the same graph on different
+    // models of it is what made every mode switch click.
     private async setMode(mode: AudioOutputMode): Promise<void> {
-        // #region agent log
-        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'C', location: 'AudioModeController.setMode:entry', message: 'setMode started', data: { mode, t: Date.now() } })
-        // #endregion
         this.currentMode = mode
 
         // Pulse LED while switching to give immediate feedback
@@ -206,22 +176,16 @@ class AudioModeController extends EventEmitter {
 
         try {
             if (mode === AudioOutputMode.LOCAL) {
-                console.log('>>> Switching to LOCAL mode (Audio -> speakers directly)')
+                console.log('>>> Switching to LOCAL mode (film: source -> speakers directly)')
+                // Connect the projector before announcing the mode, so the stream
+                // exists by the time the audio container reroutes to hardware.
                 if (this.onPrepareLocal) {
-                    // #region agent log
-                    debugLog({ sessionId: '2dea88', runId: 'post-fix', hypothesisId: 'fix', location: 'AudioModeController.setMode:beforePrepareLocal', message: 'connect before sink', data: { t: Date.now() } })
-                    // #endregion
                     await this.onPrepareLocal()
-                    // #region agent log
-                    debugLog({ sessionId: '2dea88', runId: 'post-fix', hypothesisId: 'fix', location: 'AudioModeController.setMode:afterPrepareLocal', message: 'prepareLocal done, now setSink', data: { t: Date.now() } })
-                    // #endregion
                 }
-                await this.setSink(constants.audioToggle.localSinkId)
                 this.stopLedPulse()
                 this.setLed(true)
             } else {
-                console.log('>>> Switching to MULTIROOM mode (Audio -> snapcast)')
-                await this.setSink(constants.audioToggle.snapcastSinkId)
+                console.log('>>> Switching to MULTIROOM mode (audio -> snapcast)')
                 this.stopLedPulse()
                 this.setLed(false)
             }
@@ -231,9 +195,6 @@ class AudioModeController extends EventEmitter {
             throw error
         }
 
-        // #region agent log
-        debugLog({ sessionId: '2dea88', runId: 'local-delay', hypothesisId: 'C', location: 'AudioModeController.setMode:beforeEmit', message: 'about to emit modeChanged', data: { mode, t: Date.now() } })
-        // #endregion
         // Emit event for other components to react
         this.emit('modeChanged', mode)
     }

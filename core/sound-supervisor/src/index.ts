@@ -7,6 +7,7 @@ import BluetoothPairingButtonController from './BluetoothPairingButtonController
 import MasterElection from './MasterElection'
 import { constants } from './constants'
 import { getSdk } from 'balena-sdk'
+import { startBalenaService, stopBalenaService } from './utils'
 import { AudioOutputMode, SinkState } from './types'
 
 // balenaSound core
@@ -54,6 +55,27 @@ function dropElectionAudio(): void {
     // Socket already gone; we only care that the next reconcile reconnects.
   }
   electionAudio = undefined
+}
+
+// Film mode takes snapcast out of the audio path entirely: no snapclient buffer, no
+// snapserver, and none of the CPU they cost competing with the audio thread. They
+// have to come back on the way out, or the house loses multiroom until a restart.
+function applyMultiRoomServices(running: boolean): void {
+  if (!config.isMultiRoomEnabled()) {
+    return
+  }
+
+  const apply = (service: string) => {
+    const action = running ? startBalenaService : stopBalenaService
+    action(service).catch((error: any) =>
+      console.log(`Failed to ${running ? 'start' : 'stop'} ${service}: ${error?.message ?? error}`)
+    )
+  }
+
+  if (config.isMultiRoomServer()) {
+    apply('multiroom-server')
+  }
+  apply('multiroom-client')
 }
 
 // Decide whether this device should be the multi-room master.
@@ -128,14 +150,21 @@ async function init() {
   await audioBlock.listen()
   await audioBlock.setVolume(constants.volume)
 
-  // Initialize AudioModeController after audio block is ready.
-  // When switching to LOCAL, connect to projector first (await), then switch sink so audio flows as soon as sink moves.
-  audioModeController = new AudioModeController(audioBlock, {
+  // Initialize AudioModeController after audio block is ready. It owns the button,
+  // the LED and the mode; the audio container owns the routing.
+  audioModeController = new AudioModeController({
     onPrepareLocal:
       constants.bluetoothPairingButton.connectTo
         ? () => pairingButtonController.connectToProjector()
         : undefined,
   })
+
+  // If the supervisor restarted while multiroom was stopped for film mode, nothing
+  // else would ever start it again. Reconcile from our own mode rather than trusting
+  // whatever service state was left behind.
+  if (!audioModeController.isLocalMode()) {
+    applyMultiRoomServices(true)
+  }
 
   soundAPI.setAudioOutputModeGetter(() =>
     audioModeController.getCurrentMode() === AudioOutputMode.LOCAL ? 'LOCAL' : 'MULTIROOM'
@@ -153,9 +182,11 @@ async function init() {
     console.log(`Audio output mode changed to: ${mode}`)
 
     if (mode === AudioOutputMode.LOCAL) {
-      console.log('Local mode active: Multiroom coordination disabled')
+      console.log('Local mode active: stopping multiroom so films get the shortest path')
+      applyMultiRoomServices(false)
     } else {
       console.log('Multiroom mode active: Snapcast coordination enabled')
+      applyMultiRoomServices(true)
       if (constants.bluetoothPairingButton.connectTo) {
         pairingButtonController.disconnectFromProjector().catch((e) =>
           console.error('[Bluetooth] Disconnect on MULTIROOM switch failed:', e)

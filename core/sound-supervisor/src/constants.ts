@@ -44,8 +44,6 @@ export const constants = {
     testMode: checkBool(process.env.AUDIO_TOGGLE_TEST_MODE),
     buttonPin: checkInt(process.env.AUDIO_TOGGLE_BUTTON_PIN) ?? 22,
     ledPin: checkInt(process.env.AUDIO_TOGGLE_LED_PIN) ?? 17,
-    snapcastSinkId: checkInt(process.env.AUDIO_TOGGLE_SNAPCAST_SINK_ID) ?? 3,
-    localSinkId: checkInt(process.env.AUDIO_TOGGLE_LOCAL_SINK_ID) ?? 0,
   },
   bluetoothPairingButton: {
     enabled: checkBool(process.env.BLUETOOTH_PAIRING_BUTTON_ENABLED),

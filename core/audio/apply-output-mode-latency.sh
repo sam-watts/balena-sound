@@ -1,8 +1,19 @@
 #!/bin/bash
-# Apply audio routing based on supervisor audio output mode.
-# LOCAL  = bypass loopbacks entirely, route sink inputs directly to hardware (lowest latency for films).
-# MULTIROOM = restore loopback modules with normal latency for snapcast distribution.
-# Called periodically by start.sh.
+# Apply audio routing for the supervisor's audio output mode. Polled by start.sh.
+#
+#   LOCAL     film mode. Real source streams go straight to the hardware sink with
+#             no loopbacks in the path, for the lowest latency we can manage.
+#   MULTIROOM normal operation: sources feed balena-sound.input, loopbacks carry
+#             audio on to snapcast and to the hardware.
+#
+# This script is the ONLY thing that rewires the PulseAudio graph. AudioModeController
+# used to move sink inputs too, on a different model of the graph, and the two fought
+# each other on every poll: that is what made mode switches click. The supervisor now
+# owns the button, the LED and the mode; everything below owns the routing.
+#
+# Everything here resolves sinks by NAME. Sink and sink-input indexes shift as
+# streams and cards come and go, so the old numeric assumptions broke as soon as a
+# Bluetooth device reconnected.
 
 SOUND_SUPERVISOR_PORT=${SOUND_SUPERVISOR_PORT:-80}
 SOUND_SUPERVISOR="${SOUND_SUPERVISOR:-$(ip route | awk '/default / { print $3 }'):$SOUND_SUPERVISOR_PORT}"
@@ -10,6 +21,7 @@ OUTPUT_MODE=$(curl --silent --max-time 2 "$SOUND_SUPERVISOR/audio/output-mode" 2
 
 NORMAL_LATENCY_MS=${SOUND_INPUT_LATENCY:-200}
 NORMAL_LATENCY_MS_OUT=${SOUND_OUTPUT_LATENCY:-200}
+INPUT_SINK_NAME=${SOUND_INPUT_SINK:-balena-sound.input}
 
 if [[ "$OUTPUT_MODE" == "LOCAL" ]]; then
   TARGET_STATE="local"
@@ -23,86 +35,89 @@ CURRENT_STATE=$(cat /tmp/audio-latency-state 2>/dev/null || echo "none")
 INPUT_SINK=$(cat /tmp/balena-sound-input-sink 2>/dev/null)
 OUTPUT_SINK=$(cat /tmp/balena-sound-output-sink 2>/dev/null)
 
-# Read hardware sink name from the audio block
+# Hardware sink name, written by the audio block on startup.
 HW_SINK_FILE=/run/pulse/pulseaudio.sink
 if [[ -f "$HW_SINK_FILE" ]]; then
   HW_SINK=$(cat "$HW_SINK_FILE")
 fi
 HW_SINK="${HW_SINK:-0}"
 
-if [[ "$TARGET_STATE" == "local" ]]; then
-  # --- LOCAL mode: bypass loopbacks, route directly to hardware ---
+# Real source streams only: librespot, shairport, Bluetooth and friends all arrive
+# over the native protocol, while the internal plumbing is module-loopback. Moving
+# a loopback is what previously fed balena-sound.input from its own monitor, which
+# is a feedback loop, so those must never be touched here.
+#
+# Long-form output is parsed rather than `short` because the driver is unambiguous
+# there; the column order of `short` is not worth betting the routing on.
+source_stream_inputs() {
+  pactl list sink-inputs 2>/dev/null | awk '
+    /^Sink Input #/  { idx = substr($3, 2); drv = "" }
+    /^[[:space:]]*Driver:/ { drv = $2 }
+    /^[[:space:]]*Sink:/   { if (idx != "" && drv == "protocol-native.c") print idx }
+  '
+}
 
-  # Unload all loopback modules (they add ~68-136ms latency)
+# Silence the hardware while the graph is rebuilt, then let it settle before letting
+# audio through again. Rewiring a live sink is what pops the speakers.
+mute_hw()   { pactl set-sink-mute "$HW_SINK" 1 2>/dev/null || true; }
+unmute_hw() { sleep 0.2; pactl set-sink-mute "$HW_SINK" 0 2>/dev/null || true; }
+
+if [[ "$TARGET_STATE" == "local" ]]; then
+  # --- LOCAL: film mode. Source -> hardware, nothing in between. ---
+  mute_hw
+
+  # Unload every loopback; each one costs latency we are trying to remove.
   while read -r id _ name rest; do
     [[ "$name" == "module-loopback" ]] && pactl unload-module "$id" 2>/dev/null || true
   done < <(pactl list modules short 2>/dev/null)
 
-  # Set hardware as default sink so new BT connections go directly there
+  # New connections (a projector pairing over Bluetooth) should land on hardware.
   pactl set-default-sink "$HW_SINK" 2>/dev/null || true
 
-  # Move ALL existing sink inputs to hardware
-  while read -r si_id _ sink_name _rest; do
+  for si_id in $(source_stream_inputs); do
     pactl move-sink-input "$si_id" "$HW_SINK" 2>/dev/null || true
-  done < <(pactl list sink-inputs short 2>/dev/null)
+  done
 
+  unmute_hw
   echo "$TARGET_STATE" > /tmp/audio-latency-state
-  echo "Audio latency set to local (loopbacks bypassed, default sink: $HW_SINK)"
+  echo "Audio mode LOCAL: sources routed straight to $HW_SINK, loopbacks removed"
 
 else
-  # --- MULTIROOM mode: restore loopback modules with normal latency ---
+  # --- MULTIROOM: normal operation. ---
 
   # On a fresh start there is nothing to restore: balena-sound.pa has already wired
-  # the loopbacks and the default sink correctly. Just record the state. Without
-  # this the restore below runs on every boot (the state file lives in /tmp, so it
-  # is always empty at startup) and rewires a correct configuration into a broken
-  # one.
+  # the loopbacks and the default sink. Just record the state. Without this the
+  # restore below runs on every boot, because the state file lives in /tmp and is
+  # therefore always empty at startup, and rewires a correct graph into a broken one.
   if [[ "$CURRENT_STATE" == "none" ]]; then
     echo "$TARGET_STATE" > /tmp/audio-latency-state
     exit 0
   fi
 
-  # Only reload if input/output sink config is available
   [[ -z "$INPUT_SINK" || -z "$OUTPUT_SINK" ]] && exit 1
 
-  # Note which streams LOCAL mode parked on the hardware sink, before reloading the
-  # loopbacks. This has to happen first: the output loopback we are about to load
-  # attaches its own sink input to that same hardware sink, and moving *that* onto
-  # balena-sound.input would be a feedback loop.
-  #
-  # Moving every sink input here (rather than just these) is what previously broke
-  # playback: the loopback reading balena-sound.input.monitor was moved onto
-  # balena-sound.input itself. It buzzes, and it holds the sink permanently RUNNING
-  # so the supervisor believes the device is always playing and fights its peer for
-  # multi-room master.
-  HW_SINK_INDEX=$(pactl list sinks short 2>/dev/null | awk -v n="$HW_SINK" '$2 == n { print $1; exit }')
-  HW_SINK_INDEX="${HW_SINK_INDEX:-$HW_SINK}"
+  mute_hw
 
-  PARKED_INPUTS=""
-  while read -r si_id si_sink _rest; do
-    [[ "$si_sink" == "$HW_SINK_INDEX" ]] && PARKED_INPUTS="$PARKED_INPUTS $si_id"
-  done < <(pactl list sink-inputs short 2>/dev/null)
-
-  # Check if loopbacks are already loaded
   LOOPBACKS_LOADED=0
   while read -r id _ name rest; do
     [[ "$name" == "module-loopback" ]] && LOOPBACKS_LOADED=$((LOOPBACKS_LOADED + 1))
   done < <(pactl list modules short 2>/dev/null)
 
   if [[ "$LOOPBACKS_LOADED" -lt 2 ]]; then
-    # Reload loopback modules with normal latency
     pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS source=balena-sound.input.monitor $INPUT_SINK 2>/dev/null || true
     pactl load-module module-loopback latency_msec=$NORMAL_LATENCY_MS_OUT source=balena-sound.output.monitor $OUTPUT_SINK 2>/dev/null || true
     sleep 0.2
   fi
 
-  # Restore default sink to balena-sound.input for normal routing
-  pactl set-default-sink "balena-sound.input" 2>/dev/null || true
+  pactl set-default-sink "$INPUT_SINK_NAME" 2>/dev/null || true
 
-  for si_id in $PARKED_INPUTS; do
-    pactl move-sink-input "$si_id" "balena-sound.input" 2>/dev/null || true
+  # Send the real sources back to the input sink. The loopbacks just reloaded are
+  # skipped by source_stream_inputs, so they stay where they were created.
+  for si_id in $(source_stream_inputs); do
+    pactl move-sink-input "$si_id" "$INPUT_SINK_NAME" 2>/dev/null || true
   done
 
+  unmute_hw
   echo "$TARGET_STATE" > /tmp/audio-latency-state
-  echo "Audio latency set to multiroom (loopbacks restored, input ${NORMAL_LATENCY_MS}ms, output ${NORMAL_LATENCY_MS_OUT}ms)"
+  echo "Audio mode MULTIROOM: loopbacks restored (input ${NORMAL_LATENCY_MS}ms, output ${NORMAL_LATENCY_MS_OUT}ms)"
 fi
