@@ -134,15 +134,17 @@ class BluetoothPairingButtonController extends EventEmitter {
   private disconnectFromDevice(mac: string): Promise<boolean> {
     const normalizedMac = mac.replace(/-/g, ':').toUpperCase()
     return new Promise((resolve) => {
-      exec(`bluetoothctl disconnect ${normalizedMac}`, (err, _stdout, stderr) => {
-        if (err) {
-          console.error('[BluetoothPairingButton] Disconnect failed:', err.message)
-          if (stderr) console.error('[BluetoothPairingButton]', stderr)
+      exec(`bluetoothctl disconnect ${normalizedMac}`, (err, stdout, stderr) => {
+        // Same trap as connect: bluetoothctl exits 0 whether or not it worked, and
+        // reports the outcome on stdout.
+        const output: string = `${stdout ?? ''}${stderr ?? ''}`.trim()
+        if (err || !/Successful disconnected|Device has been disconnected/i.test(output)) {
+          console.error(`[BluetoothPairingButton] Disconnect from ${normalizedMac} failed: ${output || err?.message || 'no confirmation from bluetoothctl'}`)
           resolve(false)
-        } else {
-          console.log('[BluetoothPairingButton] Disconnected from', normalizedMac)
-          resolve(true)
+          return
         }
+        console.log('[BluetoothPairingButton] Disconnected from', normalizedMac)
+        resolve(true)
       })
     })
   }
