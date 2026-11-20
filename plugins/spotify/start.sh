@@ -49,7 +49,13 @@ if [[ -n "$SOUND_SPOTIFY_PIPE" ]]; then
     sleep 5
   done
   echo "Output: pipe $SOUND_SPOTIFY_PIPE (direct to snapserver)"
-  BACKEND=(--backend pipe --device "$SOUND_SPOTIFY_PIPE")
+  # Write to stdout and let the shell hold the FIFO open for librespot's whole life.
+  # With --device, librespot opens the path when its sink starts and closes it when
+  # it stops, which it did every few seconds during playback: snapserver saw EOF,
+  # reopened, and every client got a gap and an XRUN. librespot logs to stderr, so
+  # stdout carries only PCM.
+  BACKEND=(--backend pipe)
+  exec > "$SOUND_SPOTIFY_PIPE"
 else
   BACKEND=(--backend pulseaudio)
 fi
