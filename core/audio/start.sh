@@ -95,6 +95,18 @@ if [[ -n "$SOUND_ENABLE_SOUNDCARD_INPUT" ]]; then
   route_input_source
 fi
 
+# Direct mode (SOUND_DIRECT): sources write straight into snapserver and snapclient
+# is the only PulseAudio client, so drop every loopback and make the hardware sink
+# the default. snapclient then reaches the DAC in one hop with nothing resampling
+# or copying audio between null sinks.
+if [[ -n "$SOUND_DIRECT" ]]; then
+  HW_SINK=$(cat /run/pulse/pulseaudio.sink 2>/dev/null)
+  HW_SINK="${HW_SINK:-0}"
+  sed -i '/module-loopback/d' "$CONFIG_FILE"
+  sed -i "s/^set-default-sink .*/set-default-sink $HW_SINK/" "$CONFIG_FILE"
+  echo "Direct mode: no loopbacks, default sink is '$HW_SINK'."
+fi
+
 # Save sink names for apply-output-mode-latency.sh (switches loopback latency when audio output mode is LOCAL)
 grep "balena-sound.input.monitor" "$CONFIG_FILE" | sed -n 's/.*\(sink=[^ ]*\).*/\1/p' > /tmp/balena-sound-input-sink
 grep "balena-sound.output.monitor" "$CONFIG_FILE" | sed -n 's/.*\(sink=[^ ]*\).*/\1/p' > /tmp/balena-sound-output-sink
@@ -108,6 +120,10 @@ trap 'kill $PA_PID 2>/dev/null; exit 0' SIGTERM SIGINT
 sleep 3
 
 # Watcher: when supervisor reports LOCAL (audio toggle), apply low loopback latency; when MULTIROOM, apply normal.
-(while true; do /usr/src/apply-output-mode-latency.sh 2>/dev/null; sleep 2; done) &
+# Not in direct mode: there are no loopbacks to rewire, and polling with curl every
+# two seconds is a measurable cost on a single core.
+if [[ -z "$SOUND_DIRECT" ]]; then
+  (while true; do /usr/src/apply-output-mode-latency.sh 2>/dev/null; sleep 2; done) &
+fi
 
 wait $PA_PID

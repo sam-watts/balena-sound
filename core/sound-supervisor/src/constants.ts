@@ -19,6 +19,9 @@ export const constants = {
   port: checkInt(process.env.SOUND_SUPERVISOR_PORT) ?? 80,
   coteDelay: checkInt(process.env.SOUND_COTE_DELAY) ?? 5000,
   mode: (<SoundModes>process.env.SOUND_MODE) ?? defaultMode(),
+  // Direct mode: sources write straight into snapserver and snapclient plays
+  // straight to the hardware sink, with no loopbacks. For single-core devices.
+  direct: checkBool(process.env.SOUND_DIRECT),
   balenaDeviceType: deviceType,
   multiroom: {
     master: process.env.SOUND_MULTIROOM_MASTER,
@@ -35,7 +38,9 @@ export const constants = {
     // How long to stop competing for master after yielding to a device that is
     // actually producing audio. Refreshed while that device keeps re-asserting
     // itself, so it only lapses once the other device goes quiet.
-    deferToPlayingMaster: (checkInt(process.env.SOUND_MULTIROOM_DEFER) ?? 90) * 1000
+    deferToPlayingMaster: (checkInt(process.env.SOUND_MULTIROOM_DEFER) ?? 90) * 1000,
+    // snapserver JSON-RPC port, used to read stream status in direct mode
+    snapserverHttpPort: checkInt(process.env.SOUND_SNAPSERVER_HTTP_PORT) ?? 1780
   },
   volume: checkInt(process.env.SOUND_VOLUME) ?? 75,
   inputSink: process.env.SOUND_INPUT_SINK ?? 'balena-sound.input',

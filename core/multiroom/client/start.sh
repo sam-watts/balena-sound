@@ -28,6 +28,13 @@ else
     SNAPCAST_CLIENT_ID=$(echo $SOUND_DEVICE_NAME | sed -e 's/[^A-Za-z0-9.-]/-/g')
 fi
 
+# Direct mode: play to PulseAudio's default sink, which the audio block makes the
+# hardware sink, instead of the balena-sound.output null sink plus a loopback.
+if [[ -n "$SOUND_DIRECT" ]]; then
+  unset PULSE_SINK
+  echo "- Direct mode: playing to the default (hardware) sink"
+fi
+
 # Start snapclient
 if [[ "$MODE" == "MULTI_ROOM" || "$MODE" == "MULTI_ROOM_CLIENT" ]]; then
   /usr/bin/snapclient --host $SNAPSERVER $LATENCY --hostID $SNAPCAST_CLIENT_ID --logfilter *:error

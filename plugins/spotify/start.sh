@@ -39,8 +39,23 @@ echo "Device name: $SOUND_DEVICE_NAME"
 [[ -n ${SOUND_SPOTIFY_DISABLE_NORMALISATION+x} ]] && echo "Volume normalization disabled."
 [[ -n ${SOUND_SPOTIFY_ENABLE_CACHE+x} ]] && echo "Spotify audio cache enabled."
 
+# SOUND_SPOTIFY_PIPE: write raw PCM into this FIFO (read by snapserver) instead of
+# PulseAudio. Used in direct mode to keep PulseAudio out of the multiroom path.
+# snapserver creates the FIFO; wait for it rather than letting librespot create a
+# regular file of the same name that snapserver would then never read.
+if [[ -n "$SOUND_SPOTIFY_PIPE" ]]; then
+  until [[ -p "$SOUND_SPOTIFY_PIPE" ]]; do
+    echo "Waiting for snapserver to create $SOUND_SPOTIFY_PIPE..."
+    sleep 5
+  done
+  echo "Output: pipe $SOUND_SPOTIFY_PIPE (direct to snapserver)"
+  BACKEND=(--backend pipe --device "$SOUND_SPOTIFY_PIPE")
+else
+  BACKEND=(--backend pulseaudio)
+fi
+
 set -- /usr/bin/librespot \
-  --backend pulseaudio \
+  "${BACKEND[@]}" \
   --name "$SOUND_DEVICE_NAME" \
   --bitrate "$SOUND_SPOTIFY_BITRATE" \
   --cache /var/cache/raspotify \

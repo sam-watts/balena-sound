@@ -31,6 +31,11 @@ if [[ "$MODE" == "MULTI_ROOM" ]]; then
   echo "Starting multi-room server..."
   mkdir -p /var/run/dbus
   ln -sf /host/run/dbus/system_bus_socket /var/run/dbus/system_bus_socket
+  if [[ -n "$SOUND_DIRECT" ]]; then
+    echo "Direct mode: reading Spotify from /run/snapfifo/spotify, not PulseAudio"
+    mkdir -p /run/snapfifo
+    cp /etc/snapserver-direct.conf /etc/snapserver.conf
+  fi
   /usr/bin/snapserver
 else
   echo "Multi-room server disabled. Exiting..."

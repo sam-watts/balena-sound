@@ -1,4 +1,5 @@
 import * as cote from 'cote'
+import axios from 'axios'
 import BalenaAudio from 'balena-audio'
 import SoundAPI from './SoundAPI'
 import SoundConfig from './SoundConfig'
@@ -57,6 +58,28 @@ async function getElectionAudio(): Promise<BalenaAudio> {
     electionAudio = audio
   }
   return electionAudio
+}
+
+// Is a local source playing right now?
+//
+// Normally every source feeds the balena-sound.input null sink, which only reports
+// RUNNING while something writes to it. In direct mode (SOUND_DIRECT, single-core
+// devices) sources bypass PulseAudio and write straight into snapserver, so ask
+// snapserver instead: a stream reports 'playing' only while its source has data.
+async function readLocalPlayback(): Promise<boolean> {
+  if (constants.direct) {
+    const response = await axios.post(
+      `http://localhost:${constants.multiroom.snapserverHttpPort}/jsonrpc`,
+      { id: 1, jsonrpc: '2.0', method: 'Server.GetStatus' },
+      { timeout: 3000 }
+    )
+    const streams: any[] = response.data?.result?.server?.streams ?? []
+    return streams.some((stream: any) => stream.status === 'playing')
+  }
+
+  const audio: BalenaAudio = await getElectionAudio()
+  const sink = await audio.getSink(constants.inputSink)
+  return sink.state === SinkState.RUNNING
 }
 
 function dropElectionAudio(): void {
@@ -148,18 +171,17 @@ async function reconcileMaster(): Promise<void> {
 
   reconciling = true
   try {
-    const audio: BalenaAudio = await getElectionAudio()
-    const sink = await audio.getSink(constants.inputSink)
-    hasLocalPlayback = sink.state === SinkState.RUNNING
+    hasLocalPlayback = await readLocalPlayback()
     electionFailures = 0
   } catch (error) {
     electionFailures++
     // Report the first failure and then only occasionally, so a dead connection
     // doesn't fill the logs with one line every few seconds.
     if (electionFailures === 1 || electionFailures % 15 === 0) {
-      console.log(`Master election: unable to read '${constants.inputSink}' (${electionFailures}x): ${error.message}`)
+      const source: string = constants.direct ? 'snapserver stream status' : `'${constants.inputSink}'`
+      console.log(`Master election: unable to read ${source} (${electionFailures}x): ${error.message}`)
     }
-    if (electionFailures >= 3) {
+    if (electionFailures >= 3 && !constants.direct) {
       console.log('Master election: reconnecting to the audio block')
       dropElectionAudio()
     }

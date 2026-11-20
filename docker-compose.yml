@@ -1,20 +1,30 @@
 version: "2"
 
-# Lean build for single-core Pi Zero (raspberry-pi, armv6) devices.
+# Direct build for single-core Pi Zero (raspberry-pi, armv6) devices, so a Zero
+# can be multiroom master or client. Run it with SOUND_MODE=MULTI_ROOM.
 #
-# Differences from the full build on fix-multiroom:
+# Builds on the lean build (branch pi-zero-lean):
 #   - Everything runs on the host network. Plugins reach PulseAudio over
 #     tcp:localhost:4317, and with a published port that stream went through
-#     balena-engine-proxy, a userspace copy of every sample that cost ~30% CPU
-#     on a Zero.
+#     balena-engine-proxy, a userspace copy of every sample that cost ~30% CPU.
 #   - multiroom-server/client use restart: on-failure. Both exit 0 when the mode does
 #     not need them, and unless-stopped looped them forever, starving PulseAudio.
-#   - The multiroom server is allowed on raspberry-pi and snapcast uses the pcm codec,
-#     so a Zero can be master without encoding FLAC.
 #   - airplay, hostname and restarter are dropped to save CPU and RAM.
+#
+# Direct mode (SOUND_DIRECT) takes PulseAudio out of the multiroom path. The full
+# build sends audio through PulseAudio twice (source -> loopback -> snapcast sink ->
+# snapserver, then snapclient -> loopback -> DAC), which one core cannot keep up
+# with. Here:
+#     librespot --pipe--> snapserver --pcm--> snapclient --> PulseAudio --> DAC
+#   - librespot writes raw PCM into a FIFO that snapserver reads.
+#   - snapclient plays to the hardware sink, and no loopbacks are loaded.
+#   - Master election reads snapserver's stream status, not a PulseAudio sink.
+#   - Bluetooth is dropped: its audio only reaches PulseAudio, which no longer feeds
+#     snapserver. Spotify is the only source on this build.
 
 volumes:
   spotifycache:
+  snapfifo:
 
 services:
   audio:
@@ -28,6 +38,7 @@ services:
       # On the host network the default route is the LAN router, not the engine
       # bridge, so the supervisor has to be addressed explicitly.
       SOUND_SUPERVISOR: localhost:80
+      SOUND_DIRECT: "1"
 
   sound-supervisor:
     privileged: true
@@ -41,28 +52,27 @@ services:
       - "/dev/mem:/dev/mem"
     environment:
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket
+      SOUND_DIRECT: "1"
     labels:
       io.balena.features.balena-api: "1"
       io.balena.features.supervisor-api: 1
       io.balena.features.dbus: "1"
 
-  # Multiroom, on the host network like audio so PulseAudio is reachable on
-  # localhost. restart: on-failure rather than unless-stopped: both scripts exit 0
-  # when the current mode does not need them, and unless-stopped turned that into a
-  # restart loop that starved PulseAudio. The sound supervisor still starts them
-  # explicitly when the mode changes.
   multiroom-server:
     build: ./core/multiroom/server
     restart: on-failure
     network_mode: host
     labels:
       io.balena.features.dbus: 1
+    volumes:
+      - snapfifo:/run/snapfifo
     environment:
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
       PULSE_SERVER: tcp:localhost:4317
       SOUND_SUPERVISOR: localhost:80
-      # Normally blacklisted on raspberry-pi; this build is tuned for it (pcm codec).
+      # Normally blacklisted on raspberry-pi; direct mode makes it affordable.
       SOUND_MULTIROOM_ALLOW_SERVER: "1"
+      SOUND_DIRECT: "1"
 
   multiroom-client:
     build: ./core/multiroom/client
@@ -71,15 +81,7 @@ services:
     environment:
       PULSE_SERVER: tcp:localhost:4317
       SOUND_SUPERVISOR: localhost:80
-
-  bluetooth:
-    build: ./plugins/bluetooth
-    restart: unless-stopped
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    labels:
-      io.balena.features.dbus: 1
+      SOUND_DIRECT: "1"
 
   spotify:
     build: ./plugins/spotify
@@ -88,3 +90,6 @@ services:
     network_mode: host
     volumes:
       - spotifycache:/var/cache/raspotify
+      - snapfifo:/run/snapfifo
+    environment:
+      SOUND_SPOTIFY_PIPE: /run/snapfifo/spotify
