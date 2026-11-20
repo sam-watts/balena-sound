@@ -42,7 +42,8 @@ sampleformat = 44100:16:2
 stream = process:///usr/bin/librespot?name=balenaSound&log_stderr=true&params=$(urlencode "$LIBRESPOT_ARGS")
 
 [logging]
-filter = *:notice
+# Not notice: that logs every control connection, i.e. the election probe every 4s.
+filter = *:warning
 EOF
 
 echo "Starting multi-room server (direct mode)..."

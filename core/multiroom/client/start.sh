@@ -34,7 +34,9 @@ fi
 # suspends its hardware sink in direct mode so the card is free.
 SOUNDCARD_ARGS=()
 if [[ -n "$SOUND_DIRECT" ]]; then
-  SOUND_SNAPCLIENT_SOUNDCARD=${SOUND_SNAPCLIENT_SOUNDCARD:-plughw:CARD=dac,DEV=0}
+  # Must be a name from `snapclient -l`: snapclient looks it up in that list rather
+  # than handing it to ALSA. sysdefault:CARD=<id> is a plug device on the card.
+  SOUND_SNAPCLIENT_SOUNDCARD=${SOUND_SNAPCLIENT_SOUNDCARD:-sysdefault:CARD=dac}
   SOUNDCARD_ARGS=(--player alsa --soundcard "$SOUND_SNAPCLIENT_SOUNDCARD")
   echo "- Direct mode: playing to ALSA device $SOUND_SNAPCLIENT_SOUNDCARD"
 fi
