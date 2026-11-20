@@ -1,16 +1,16 @@
 version: "2"
 
-# Lean build for single-core Pi Zero (raspberry-pi, armv6) devices running STANDALONE.
+# Lean build for single-core Pi Zero (raspberry-pi, armv6) devices.
 #
 # Differences from the full build on fix-multiroom:
-#   - audio runs on the host network. Every plugin reaches PulseAudio over
+#   - Everything runs on the host network. Plugins reach PulseAudio over
 #     tcp:localhost:4317, and with a published port that stream went through
 #     balena-engine-proxy, a userspace copy of every sample that cost ~30% CPU
 #     on a Zero.
-#   - multiroom-server/client are dropped. The server is blacklisted on this device
-#     type and exits immediately, and in STANDALONE the client exits too. With
-#     restart: unless-stopped both looped forever, and each restart rebuilt
-#     container networking and starved PulseAudio into dropouts.
+#   - multiroom-server/client use restart: on-failure. Both exit 0 when the mode does
+#     not need them, and unless-stopped looped them forever, starving PulseAudio.
+#   - The multiroom server is allowed on raspberry-pi and snapcast uses the pcm codec,
+#     so a Zero can be master without encoding FLAC.
 #   - airplay, hostname and restarter are dropped to save CPU and RAM.
 
 volumes:
@@ -45,6 +45,32 @@ services:
       io.balena.features.balena-api: "1"
       io.balena.features.supervisor-api: 1
       io.balena.features.dbus: "1"
+
+  # Multiroom, on the host network like audio so PulseAudio is reachable on
+  # localhost. restart: on-failure rather than unless-stopped: both scripts exit 0
+  # when the current mode does not need them, and unless-stopped turned that into a
+  # restart loop that starved PulseAudio. The sound supervisor still starts them
+  # explicitly when the mode changes.
+  multiroom-server:
+    build: ./core/multiroom/server
+    restart: on-failure
+    network_mode: host
+    labels:
+      io.balena.features.dbus: 1
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+      PULSE_SERVER: tcp:localhost:4317
+      SOUND_SUPERVISOR: localhost:80
+      # Normally blacklisted on raspberry-pi; this build is tuned for it (pcm codec).
+      SOUND_MULTIROOM_ALLOW_SERVER: "1"
+
+  multiroom-client:
+    build: ./core/multiroom/client
+    restart: on-failure
+    network_mode: host
+    environment:
+      PULSE_SERVER: tcp:localhost:4317
+      SOUND_SUPERVISOR: localhost:80
 
   bluetooth:
     build: ./plugins/bluetooth

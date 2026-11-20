@@ -2,7 +2,7 @@
 set -e
 
 SOUND_SUPERVISOR_PORT=${SOUND_SUPERVISOR_PORT:-80}
-SOUND_SUPERVISOR="$(ip route | awk '/default / { print $3 }'):$SOUND_SUPERVISOR_PORT"
+SOUND_SUPERVISOR="${SOUND_SUPERVISOR:-$(ip route | awk '/default / { print $3 }'):$SOUND_SUPERVISOR_PORT}"
 # Wait for sound supervisor to start
 while ! curl --silent --output /dev/null "$SOUND_SUPERVISOR/ping"; do sleep 5; echo "Waiting for sound supervisor to start at $SOUND_SUPERVISOR"; done
 
@@ -16,7 +16,7 @@ declare -A blacklisted=(
   ["raspberry-pi2"]=1
 )
 
-if [[ -n "${blacklisted[$BALENA_DEVICE_TYPE]}" ]]; then
+if [[ -n "${blacklisted[$BALENA_DEVICE_TYPE]}" && -z "$SOUND_MULTIROOM_ALLOW_SERVER" ]]; then
   echo "Multi-room server blacklisted for $BALENA_DEVICE_TYPE. Exiting..."
 
   if [[ "$MODE" == "MULTI_ROOM" ]]; then
