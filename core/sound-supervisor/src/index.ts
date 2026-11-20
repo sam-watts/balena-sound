@@ -305,13 +305,10 @@ audioBlock.on('play', async (sink: any) => {
     void reconcileMaster()
   }
 
-  // Temporary usage tracking for balenaHub metrics
-  try {
-    await sdk.models.device.tags.set(process.env.BALENA_DEVICE_UUID!, 'metrics:play', '') // BALENA_DEVICE_UUID is always present in balenaOS
-  } catch (error) {
-    console.log(error.message)
-  }
-
+  // No balenaHub "metrics:play" tag here any more. It made a balenaCloud API call
+  // on every play event; when an overloaded device's sinks flap, play fires many
+  // times a second, the API answers 429 Too Many Requests, and the HTTPS traffic
+  // itself adds load to a device that is already starved.
 })
 
 // Event: "fleet-update"
