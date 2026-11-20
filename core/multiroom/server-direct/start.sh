@@ -39,7 +39,7 @@ port = 1780
 # Raw PCM: no FLAC encode on the master or decode on clients.
 codec = pcm
 sampleformat = 44100:16:2
-stream = process:///usr/bin/librespot?name=balenaSound&log_stderr=true&params=$(urlencode "$LIBRESPOT_ARGS")
+stream = process:///usr/src/librespot-aligned.sh?name=balenaSound&log_stderr=true&params=$(urlencode "$LIBRESPOT_ARGS")
 
 [logging]
 # Not notice: that logs every control connection, i.e. the election probe every 4s.

@@ -1,5 +1,6 @@
 import * as cote from 'cote'
 import axios from 'axios'
+import * as http from 'http'
 import BalenaAudio from 'balena-audio'
 import SoundAPI from './SoundAPI'
 import SoundConfig from './SoundConfig'
@@ -66,12 +67,16 @@ async function getElectionAudio(): Promise<BalenaAudio> {
 // RUNNING while something writes to it. In direct mode (SOUND_DIRECT, single-core
 // devices) sources bypass PulseAudio and write straight into snapserver, so ask
 // snapserver instead: a stream reports 'playing' only while its source has data.
+const snapserverAgent: http.Agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
+
 async function readLocalPlayback(): Promise<boolean> {
   if (constants.direct) {
     const response = await axios.post(
       `http://localhost:${constants.multiroom.snapserverHttpPort}/jsonrpc`,
       { id: 1, jsonrpc: '2.0', method: 'Server.GetStatus' },
-      { timeout: 3000 }
+      // Reuse one connection: a fresh one every 4s made snapserver log
+      // "Connection reset by peer" each time the probe hung up.
+      { timeout: 3000, httpAgent: snapserverAgent }
     )
     const streams: any[] = response.data?.result?.server?.streams ?? []
     return streams.some((stream: any) => stream.status === 'playing')

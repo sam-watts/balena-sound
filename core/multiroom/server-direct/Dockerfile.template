@@ -29,11 +29,13 @@ RUN cargo install librespot --version "${LIBRESPOT_VERSION}" \
 FROM balenalib/%%BALENA_ARCH%%-debian:bookworm-run
 
 # libpulse0: librespot links it (pulseaudio-backend), even though it uses pipe here
-RUN install_packages snapserver libpulse0 ca-certificates curl iproute2 bash
+# procps: pkill in librespot-aligned.sh
+RUN install_packages snapserver libpulse0 ca-certificates curl iproute2 bash procps
 
 COPY --from=build /usr/local/bin/librespot /usr/bin/librespot
 
 WORKDIR /usr/src
-COPY start.sh .
+COPY start.sh librespot-aligned.sh ./
+RUN chmod +x /usr/src/librespot-aligned.sh
 
 CMD [ "/bin/bash", "/usr/src/start.sh" ]
