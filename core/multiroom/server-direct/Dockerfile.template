@@ -1,0 +1,39 @@
+# snapserver for direct mode (SOUND_DIRECT, single-core devices).
+#
+# snapserver launches librespot itself (process:// source) and reads raw PCM from
+# its stdout, so there is no PulseAudio and no FIFO shared between containers.
+# snapserver owns librespot's lifecycle: if librespot exits it is restarted and the
+# stream starts clean, rather than a half-written frame misaligning every sample.
+#
+# Debian rather than the Alpine multiroom image, because librespot is built
+# against glibc. The build stage is identical to plugins/spotify so the builder
+# reuses its cached librespot.
+#
+# hadolint ignore=DL3006
+FROM balenalib/%%BALENA_ARCH%%-debian:bookworm-build as build
+
+ARG LIBRESPOT_VERSION=0.8.0
+
+RUN install_packages build-essential pkg-config libpulse-dev ca-certificates curl
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install librespot --version "${LIBRESPOT_VERSION}" \
+      --no-default-features \
+      --features pulseaudio-backend,rustls-tls-native-roots,with-libmdns \
+      --locked --root /usr/local
+
+# hadolint ignore=DL3006
+FROM balenalib/%%BALENA_ARCH%%-debian:bookworm-run
+
+# libpulse0: librespot links it (pulseaudio-backend), even though it uses pipe here
+RUN install_packages snapserver libpulse0 ca-certificates curl iproute2 bash
+
+COPY --from=build /usr/local/bin/librespot /usr/bin/librespot
+
+WORKDIR /usr/src
+COPY start.sh .
+
+CMD [ "/bin/bash", "/usr/src/start.sh" ]

@@ -104,7 +104,10 @@ if [[ -n "$SOUND_DIRECT" ]]; then
   HW_SINK="${HW_SINK:-0}"
   sed -i '/module-loopback/d' "$CONFIG_FILE"
   sed -i "s/^set-default-sink .*/set-default-sink $HW_SINK/" "$CONFIG_FILE"
-  echo "Direct mode: no loopbacks, default sink is '$HW_SINK'."
+  # snapclient writes to the card directly over ALSA, so PulseAudio must let go of
+  # it. A user suspend closes the ALSA device and holds it closed until undone.
+  echo "suspend-sink $HW_SINK 1" >> "$CONFIG_FILE"
+  echo "Direct mode: no loopbacks, '$HW_SINK' suspended so snapclient can use the card."
 fi
 
 # Save sink names for apply-output-mode-latency.sh (switches loopback latency when audio output mode is LOCAL)

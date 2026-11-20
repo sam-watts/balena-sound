@@ -1,30 +1,27 @@
 version: "2"
 
 # Direct build for single-core Pi Zero (raspberry-pi, armv6) devices, so a Zero
-# can be multiroom master or client. Run it with SOUND_MODE=MULTI_ROOM.
+# can be multiroom master or client.
 #
 # Builds on the lean build (branch pi-zero-lean):
-#   - Everything runs on the host network. Plugins reach PulseAudio over
-#     tcp:localhost:4317, and with a published port that stream went through
-#     balena-engine-proxy, a userspace copy of every sample that cost ~30% CPU.
+#   - Everything runs on the host network. With a published port, PulseAudio
+#     traffic went through balena-engine-proxy, a userspace copy of every sample.
 #   - multiroom-server/client use restart: on-failure. Both exit 0 when the mode does
-#     not need them, and unless-stopped looped them forever, starving PulseAudio.
-#   - airplay, hostname and restarter are dropped to save CPU and RAM.
+#     not need them, and unless-stopped looped them forever.
+#   - airplay, hostname and restarter are dropped.
 #
-# Direct mode (SOUND_DIRECT) takes PulseAudio out of the multiroom path. The full
-# build sends audio through PulseAudio twice (source -> loopback -> snapcast sink ->
-# snapserver, then snapclient -> loopback -> DAC), which one core cannot keep up
-# with. Here:
-#     librespot --pipe--> snapserver --pcm--> snapclient --> PulseAudio --> DAC
-#   - librespot writes raw PCM into a FIFO that snapserver reads.
-#   - snapclient plays to the hardware sink, and no loopbacks are loaded.
+# Direct mode (SOUND_DIRECT) keeps PulseAudio out of the audio path entirely:
+#     snapserver --runs--> librespot --stdout--> snapserver --pcm--> snapclient --ALSA--> DAC
+#   - snapserver launches and owns librespot (process:// source) and reads raw PCM
+#     from its stdout. No FIFO between containers, and a librespot restart starts a
+#     clean stream instead of misaligning it.
+#   - snapclient writes to the card over ALSA; PulseAudio suspends its hardware sink.
 #   - Master election reads snapserver's stream status, not a PulseAudio sink.
-#   - Bluetooth is dropped: its audio only reaches PulseAudio, which no longer feeds
-#     snapserver. Spotify is the only source on this build.
+#   - Spotify is the only source: Bluetooth and the Spotify plugin container are not
+#     used. PulseAudio still runs because the sound supervisor connects to it.
 
 volumes:
   spotifycache:
-  snapfifo:
 
 services:
   audio:
@@ -53,43 +50,29 @@ services:
     environment:
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/host/run/dbus/system_bus_socket
       SOUND_DIRECT: "1"
+      # Master or client by election. A device or fleet SOUND_MODE variable overrides this.
+      SOUND_MODE: MULTI_ROOM
     labels:
       io.balena.features.balena-api: "1"
       io.balena.features.supervisor-api: 1
       io.balena.features.dbus: "1"
 
   multiroom-server:
-    build: ./core/multiroom/server
+    build: ./core/multiroom/server-direct
     restart: on-failure
     network_mode: host
-    labels:
-      io.balena.features.dbus: 1
     volumes:
-      - snapfifo:/run/snapfifo
+      - spotifycache:/var/cache/raspotify
     environment:
-      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
-      PULSE_SERVER: tcp:localhost:4317
       SOUND_SUPERVISOR: localhost:80
-      # Normally blacklisted on raspberry-pi; direct mode makes it affordable.
-      SOUND_MULTIROOM_ALLOW_SERVER: "1"
-      SOUND_DIRECT: "1"
 
   multiroom-client:
     build: ./core/multiroom/client
     restart: on-failure
     network_mode: host
+    privileged: true
     environment:
       PULSE_SERVER: tcp:localhost:4317
       SOUND_SUPERVISOR: localhost:80
       SOUND_DIRECT: "1"
-
-  spotify:
-    build: ./plugins/spotify
-    restart: unless-stopped
-    privileged: true
-    network_mode: host
-    volumes:
-      - spotifycache:/var/cache/raspotify
-      - snapfifo:/run/snapfifo
-    environment:
-      SOUND_SPOTIFY_PIPE: /run/snapfifo/spotify
+      SOUND_SNAPCLIENT_LOGFILTER: "*:notice"

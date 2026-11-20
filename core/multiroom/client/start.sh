@@ -28,16 +28,21 @@ else
     SNAPCAST_CLIENT_ID=$(echo $SOUND_DEVICE_NAME | sed -e 's/[^A-Za-z0-9.-]/-/g')
 fi
 
-# Direct mode: play to PulseAudio's default sink, which the audio block makes the
-# hardware sink, instead of the balena-sound.output null sink plus a loopback.
+# Direct mode: write straight to the sound card over ALSA. Through PulseAudio
+# (ALSA pulse plugin -> PulseAudio -> card) the latency snapclient measures jitters,
+# and it keeps correcting for it; on a single core that is audible. The audio block
+# suspends its hardware sink in direct mode so the card is free.
+SOUNDCARD_ARGS=()
 if [[ -n "$SOUND_DIRECT" ]]; then
-  unset PULSE_SINK
-  echo "- Direct mode: playing to the default (hardware) sink"
+  SOUND_SNAPCLIENT_SOUNDCARD=${SOUND_SNAPCLIENT_SOUNDCARD:-plughw:CARD=dac,DEV=0}
+  SOUNDCARD_ARGS=(--player alsa --soundcard "$SOUND_SNAPCLIENT_SOUNDCARD")
+  echo "- Direct mode: playing to ALSA device $SOUND_SNAPCLIENT_SOUNDCARD"
 fi
+LOGFILTER=${SOUND_SNAPCLIENT_LOGFILTER:-*:error}
 
 # Start snapclient
 if [[ "$MODE" == "MULTI_ROOM" || "$MODE" == "MULTI_ROOM_CLIENT" ]]; then
-  /usr/bin/snapclient --host $SNAPSERVER $LATENCY --hostID $SNAPCAST_CLIENT_ID --logfilter *:error
+  exec /usr/bin/snapclient --host $SNAPSERVER $LATENCY --hostID $SNAPCAST_CLIENT_ID "${SOUNDCARD_ARGS[@]}" --logfilter "$LOGFILTER"
 else
   echo "Multi-room client disabled. Exiting..."
   exit 0
