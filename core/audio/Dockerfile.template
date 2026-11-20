@@ -5,4 +5,13 @@ WORKDIR /usr/src
 COPY . .
 RUN chmod +x /usr/src/apply-output-mode-latency.sh
 
+# Cheaper resampling for single-core devices. module-loopback resamples continuously
+# to track clock drift, so the resampler runs even for 44.1 kHz-in, 44.1 kHz-out.
+# speex-fixed-1 is integer-only (the Zero has no fast float path) and still clean.
+RUN mkdir -p /etc/pulse/daemon.conf.d && printf '%s\n' \
+      'resample-method = speex-fixed-1' \
+      'default-sample-rate = 44100' \
+      'avoid-resampling = yes' \
+      > /etc/pulse/daemon.conf.d/90-low-cpu.conf
+
 CMD [ "/bin/bash", "/usr/src/start.sh" ]

@@ -1,20 +1,33 @@
 version: "2"
 
+# Lean build for single-core Pi Zero (raspberry-pi, armv6) devices running STANDALONE.
+#
+# Differences from the full build on fix-multiroom:
+#   - audio runs on the host network. Every plugin reaches PulseAudio over
+#     tcp:localhost:4317, and with a published port that stream went through
+#     balena-engine-proxy, a userspace copy of every sample that cost ~30% CPU
+#     on a Zero.
+#   - multiroom-server/client are dropped. The server is blacklisted on this device
+#     type and exits immediately, and in STANDALONE the client exits too. With
+#     restart: unless-stopped both looped forever, and each restart rebuilt
+#     container networking and starved PulseAudio into dropouts.
+#   - airplay, hostname and restarter are dropped to save CPU and RAM.
+
 volumes:
   spotifycache:
 
 services:
-  # Core services
-  # -- Required for a fully featured installation of balenaSound
-  # -- Mutiroom services can be removed if not using multiroom mode
   audio:
     build: ./core/audio
     restart: unless-stopped
     privileged: true
+    network_mode: host
     labels:
       io.balena.features.dbus: 1
-    ports:
-      - 4317:4317
+    environment:
+      # On the host network the default route is the LAN router, not the engine
+      # bridge, so the supervisor has to be addressed explicitly.
+      SOUND_SUPERVISOR: localhost:80
 
   sound-supervisor:
     privileged: true
@@ -33,39 +46,12 @@ services:
       io.balena.features.supervisor-api: 1
       io.balena.features.dbus: "1"
 
-  multiroom-server:
-    build: ./core/multiroom/server
-    restart: unless-stopped
-    labels:
-      io.balena.features.dbus: 1
-    environment:
-      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
-    ports:
-      - 1704:1704
-      - 1705:1705
-      - 1780:1780
-
-  multiroom-client:
-    build: ./core/multiroom/client
-    restart: unless-stopped
-
-  # Plugins
-  # -- Additional plugins can be added. See https://balena-sound.pages.dev/plugins
-  # -- Remove unwanted plugins as needed
   bluetooth:
     build: ./plugins/bluetooth
     restart: unless-stopped
     network_mode: host
     cap_add:
       - NET_ADMIN
-    labels:
-      io.balena.features.dbus: 1
-
-  airplay:
-    build: ./plugins/airplay
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
     labels:
       io.balena.features.dbus: 1
 
@@ -76,19 +62,3 @@ services:
     network_mode: host
     volumes:
       - spotifycache:/var/cache/raspotify
-
-  # https://github.com/balenablocks/hostname
-  hostname:
-    build: ./core/hostname
-    restart: no
-    labels:
-      io.balena.features.supervisor-api: 1
-    environment:
-      SET_HOSTNAME: balena
-
-  # Restart all other services daily at 2am
-  restarter:
-    build: ./core/restarter
-    restart: unless-stopped
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
